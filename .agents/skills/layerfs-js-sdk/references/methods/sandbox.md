@@ -27,7 +27,8 @@ try {
 ```
 
 Another agent may mount in a Sandbox you created when it names it; `close` then refuses
-`MountsActive` until that Workspace is unmounted.
+`MountsActive` until that Workspace is unmounted. `close(sandbox, true)` is the recovery
+there: it force-closes the Sandbox without that refusal.
 
 ## `sandbox.create(options?)`
 
@@ -70,16 +71,32 @@ The mounted Workspaces of one running Sandbox, from its daemon.
 
 **Refusals:** `NoSuchSandbox` (not running), `InvalidInput`.
 
-## `sandbox.close(sandbox)`
+## `sandbox.close(sandbox, force?)`
 
-Stops a Sandbox now: stop, then delete, each attempted once, then its records.
+Stops a Sandbox now: stop, then delete, each attempted once, then its records. Without
+`force`, it refuses while a Workspace is mounted.
+
+| Arg | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `sandbox` | string | yes | The Sandbox's number, such as `"1"` |
+| `force` | boolean | no | Skip the mounted-Workspace refusal and the daemon check; stop and delete the container anyway |
 
 **Returns:** `{ kind: "Closed", sandbox }`.
+
+**Destructive warning:** `force: true` deletes the Sandbox container without consulting its
+daemon. Every Workspace in it is discarded, including **uncommitted changes**, and every
+process running in the Sandbox is killed. Commit and unmount what you need first; there is
+no recovery from the deleted container or from discarded uncommitted work.
+
+**Recovery:** use `close(sandbox, true)` when a Workspace is stuck `Retained(Detach)` after
+a stalled unmount and the daemon will not release it, or when a normal `close` refuses
+`MountsActive` for a Workspace that cannot be unmounted. It is also the recovery for a
+Sandbox whose daemon no longer answers: force does not need the daemon.
 
 **Refusals**
 
 | Code | Meaning | Do |
 | --- | --- | --- |
-| `MountsActive` | A Workspace is still mounted there; `detail.workspaces` lists them | Commit or unmount them first (yours), or leave the Sandbox to close itself |
+| `MountsActive` | A Workspace is still mounted there and `force` was not set; `detail.workspaces` lists them | Commit or unmount them first (yours), retry with `force: true` if one is stuck, or leave the Sandbox to close itself |
 | `NoSuchSandbox` | No such Sandbox, or it already closed itself | Nothing to do |
-| `Failed`, `Unknown` | The stop or delete failed, or its outcome is uncertain | Stop and report the message |
+| `Failed`, `Unknown` | The stop or delete failed, or its outcome is uncertain | Stop and report the message; its records are kept |

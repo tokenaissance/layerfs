@@ -183,10 +183,15 @@ closed itself), with a message that says to create one with
 Workspaces, with a message that says to create a new Sandbox with
 `sandbox.create()`, or list its Workspaces with
 `sandbox.list_workspaces(sandbox)` and unmount the ones that are done with
-`workspace.unmount`. `sandbox.close(sandbox)` stops one now (stop, then
-delete, each once), refused `MountsActive` while a Workspace is mounted in it
-and `NoSuchSandbox` when it is not running. A Sandbox still closes itself two
-minutes after its last Workspace is unmounted, with no call in flight.
+`workspace.unmount`. `sandbox.close(sandbox, force?)` stops one now (stop,
+then delete, each once), refused `MountsActive` while a Workspace is mounted in
+it and `NoSuchSandbox` when it is not running. With `force: true` it skips the
+running check, the daemon check and the `MountsActive` refusal and deletes the
+container anyway, discarding its uncommitted Workspaces and killing all its
+processes; commit and unmount what you need first. It is the recovery when a
+Workspace is stuck `Retained(Detach)` after a stalled unmount or when `close`
+keeps refusing `MountsActive`. A Sandbox still closes itself two minutes after
+its last Workspace is unmounted, with no call in flight.
 `project.list_sandboxes(pageSize, pagePos)` lists the running ones, each
 `{ sandbox, name, image, workspaces }`, reading records and starting and
 changing nothing; `sandbox.list_workspaces(sandbox, pageSize, pagePos)` asks
@@ -272,7 +277,7 @@ trace line covers the command's run.
 | fs reads (7) | `read(ref, path, startLine?, endLine?)`, `list(ref, path?, pageSize?, pagePos?)`, `stat(ref, path)`, `grep(ref, pattern, path?, pageSize?, pagePos?)`, `glob(ref, pattern, path?, pageSize?, pagePos?)`, `diff_files(leftRef, leftPath, rightRef, rightPath)`, `blame(ref, path, fromLine?)` |
 | fs writes (7) | `write(branch, path, content, message? \| { message?, mode? })`, `edit(branch, path, oldText, newText, message?)`, `apply(branch, changes, message?)`, `mkdir(branch, path, message? \| { message?, mode? })`, `rm(branch, path, message?)`, `cp(branch, from, to, message?)`, `mv(branch, from, to, message?)` |
 | branch (6) | `fork(name, fromRef?)`, `list_commits(branch, pageSize?, pagePos?)`, `diff_commits(from, to, pageSize?, pagePos?, { cursor?, hunks? }?)`, `diff_branches(from, to, pageSize?, pagePos?, { cursor?, hunks? }?)`, `merge(a, b, name, message?, units?)`, `publish(branch, commit?)` |
-| sandbox (3) | `create({ image }?)` → `{ sandbox, image }`, `list_workspaces(sandbox, pageSize?, pagePos?)`, `close(sandbox)` |
+| sandbox (3) | `create({ image }?)` → `{ sandbox, image }`, `list_workspaces(sandbox, pageSize?, pagePos?)`, `close(sandbox, force?)` |
 | workspace (4) | `mount(sandbox, branch)` → `{ sandbox, path, image }`, `exec(ws, command, message?, { stdout?, stderr? }?)`, `commit(ws, message?, force?)`, `unmount(ws, discard?, force?)` |
 
 A Workspace's status is not an agent call: it is `backend.daemon.workspace.status(ws)`
@@ -433,6 +438,7 @@ layerfs workspace exec 1:/workspaces/3 "npm test" --stream
 layerfs workspace commit 1:/workspaces/3 -m "step 1: npm test"
 layerfs workspace unmount 1:/workspaces/3
 layerfs sandbox close 1
+# --force discards its uncommitted Workspaces and kills all its processes
 ```
 
 ### How a call becomes a command
@@ -521,7 +527,7 @@ table differs, and when a family's files stop matching the SDK's.
 | `workspace.unmount` | `layerfs workspace unmount <ws> [--discard] [--force]` |
 | `sandbox.create` | `layerfs sandbox create [--image <text>]` |
 | `sandbox.list_workspaces` | `layerfs sandbox list_workspaces <sandbox> [--page-size <n>] [--page-pos <n>]` |
-| `sandbox.close` | `layerfs sandbox close <sandbox>` |
+| `sandbox.close` | `layerfs sandbox close <sandbox> [--force]` |
 <!-- calls:end -->
 
 ### What the command leaves out

@@ -361,12 +361,16 @@ pub(crate) fn create(args: &SdkValue) -> Outcome {
     ]))
 }
 
-/// `sandbox.close(sandbox)`: stops Sandbox `sandbox` now, under the
+/// `sandbox.close(sandbox, force?)`: stops Sandbox `sandbox` now, under the
 /// project's guard and its own. Refused `NoSuchSandbox` when it is not
-/// running and `MountsActive` while a Workspace is mounted in it (a
-/// background process runs in one). Stop, then delete, each attempted once:
-/// a failed stop is not followed by a delete and keeps its cause; the
-/// records go after the delete.
+/// running and, without `force`, `MountsActive` while a Workspace is mounted
+/// in it (a background process runs in one). With `force` it skips the
+/// running check, the daemon refresh and the mounted-Workspace refusal: it
+/// stops the container (or deletes one already stopped), deletes it and
+/// removes its records, discarding uncommitted Workspaces and killing every
+/// process in the Sandbox. A container found gone has its records removed.
+/// Stop, then delete, each attempted once: a failed stop is not followed by a
+/// delete and keeps its cause; the records go after the delete.
 pub(crate) fn close(args: &SdkValue) -> Outcome {
     let id = text(args, "sandbox")?.to_owned();
     let project = crate::discovery::project_dir(args)?;
@@ -379,36 +383,82 @@ pub(crate) fn close(args: &SdkValue) -> Outcome {
             format!("the project has no Sandbox {id}"),
         ));
     }
-    let state = crate::registry::sandbox_live(args)?;
-    let _guard = crate::discovery::guard(&state.directory)?;
-    crate::discovery::refresh(&state)?;
-    let mounted = lock(&state.mounts)?.keys().cloned().collect::<Vec<_>>();
-    if !mounted.is_empty() {
-        return Err(SdkRefusal {
-            code: "MountsActive".to_owned(),
-            message: format!(
-                "Sandbox {id} still holds {} Workspace(s); commit or unmount them first",
-                mounted.len()
-            ),
-            detail: SdkValue::map([(
-                "workspaces",
-                SdkValue::List(mounted.into_iter().map(SdkValue::Text).collect()),
-            )]),
-        });
+    if args.get_bool("force") {
+        close_forced(&directory, &record)?;
+    } else {
+        let state = crate::registry::sandbox_live(args)?;
+        let _guard = crate::discovery::guard(&state.directory)?;
+        crate::discovery::refresh(&state)?;
+        let mounted = lock(&state.mounts)?.keys().cloned().collect::<Vec<_>>();
+        if !mounted.is_empty() {
+            return Err(SdkRefusal {
+                code: "MountsActive".to_owned(),
+                message: format!(
+                    "Sandbox {id} still holds {} Workspace(s); commit or unmount them first",
+                    mounted.len()
+                ),
+                detail: SdkValue::map([(
+                    "workspaces",
+                    SdkValue::List(mounted.into_iter().map(SdkValue::Text).collect()),
+                )]),
+            });
+        }
+        let value = crate::discovery::load(&record)?;
+        let (docker, selector, request) = crate::discovery::runtime(&value)?;
+        let mut owner =
+            layerfs_sandbox::backend::docker::Sandbox::reopen(docker, selector, request)
+                .map_err(failed)?;
+        owner.stop(STOP_S).map_err(failed)?;
+        owner.delete().map_err(failed)?;
     }
-    let value = crate::discovery::load(&record)?;
-    let (docker, selector, request) = crate::discovery::runtime(&value)?;
-    let mut owner = layerfs_sandbox::backend::docker::Sandbox::reopen(docker, selector, request)
-        .map_err(failed)?;
-    owner.stop(STOP_S).map_err(failed)?;
-    owner.delete().map_err(failed)?;
-    lock(&SANDBOXES)?.remove(&directory);
-    std::fs::remove_file(record).map_err(failed)?;
-    std::fs::remove_dir_all(&directory).map_err(failed)?;
+    clear_records(&directory, &record)?;
     Ok(SdkValue::map([
         ("kind", SdkValue::text("Closed")),
         ("sandbox", SdkValue::text(&id)),
     ]))
+}
+
+/// The forced half of [`close`], under the Sandbox's own guard: reopens its
+/// exact container and stops then deletes it, skipping the daemon and the
+/// mounted-Workspace check. A container the Engine reports stopped is deleted
+/// without a stop; one it reports gone needs no delete (its records go
+/// anyway). Either stop or delete failing keeps the records and the cause.
+fn close_forced(directory: &Path, record: &Path) -> std::result::Result<(), SdkRefusal> {
+    let _guard = crate::discovery::guard(directory)?;
+    let value = crate::discovery::load(record)?;
+    let (docker, selector, request) = crate::discovery::runtime(&value)?;
+    let mut owner;
+    let stopped;
+    match layerfs_sandbox::backend::docker::Sandbox::reopen(
+        docker.clone(),
+        selector,
+        request.clone(),
+    ) {
+        Ok(open) => {
+            owner = open;
+            stopped = false;
+        }
+        Err(failure) if failure.container_stopped() => {
+            owner = layerfs_sandbox::backend::docker::Sandbox::stopped(docker, selector, request);
+            stopped = true;
+        }
+        Err(failure) if failure.container_gone() => return Ok(()),
+        Err(failure) => return Err(failed(failure)),
+    }
+    if !stopped {
+        owner.stop(STOP_S).map_err(failed)?;
+    }
+    owner.delete().map_err(failed)?;
+    Ok(())
+}
+
+/// Removes a closed Sandbox's in-process state and its records, after its
+/// container is deleted or found gone.
+fn clear_records(directory: &Path, record: &Path) -> std::result::Result<(), SdkRefusal> {
+    lock(&SANDBOXES)?.remove(directory);
+    std::fs::remove_file(record).map_err(failed)?;
+    std::fs::remove_dir_all(directory).map_err(failed)?;
+    Ok(())
 }
 
 /// `backend.daemon.sandbox.get_log({ sandbox, lines })`: the last `lines`

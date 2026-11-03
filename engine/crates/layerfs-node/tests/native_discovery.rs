@@ -122,6 +122,43 @@ fn a_stopped_container_the_engine_will_not_delete_keeps_its_records() {
 }
 
 #[test]
+fn a_forced_close_stops_and_deletes_without_the_daemon() {
+    let home = Home::new();
+    // A Workspace record is still there: force skips the daemon refresh and the
+    // mounted-Workspace refusal, so nothing about it can block the close.
+    std::fs::write(
+        home.0.join("proj/sandboxes/1/workspace-aaaa.record"),
+        b"mounted",
+    )
+    .unwrap();
+    let running = exited()
+        .replace("\"Running\":false", "\"Running\":true")
+        .replace(
+            "\"Ports\":{}",
+            r#""Ports":{"30421/tcp":[{"HostIp":"127.0.0.1","HostPort":"30421"}]}"#,
+        );
+    let engine = engines(
+        &home.0,
+        vec![(200, running), (204, String::new()), (204, String::new())],
+    );
+    home.node(
+        "assert.deepEqual(await native.call('sandbox.close',{...args,force:true}), {value:{kind:'Closed',sandbox:'1'}});",
+        None,
+        Duration::from_secs(5),
+    );
+    let requests = engine.join().unwrap();
+    assert!(requests[0].starts_with(&format!("GET /v1.54/containers/{CID}/json")));
+    assert!(requests[1].starts_with(&format!("POST /v1.54/containers/{CID}/stop?t=5")));
+    assert!(requests[2].starts_with(&format!(
+        "DELETE /v1.54/containers/{CID}?force=false&v=false"
+    )));
+    assert!(
+        !home.0.join("proj/sandboxes/1").exists(),
+        "its records and Workspaces are gone"
+    );
+}
+
+#[test]
 fn a_dropped_guard_releases_the_lock_while_a_forked_child_holds_a_copy() {
     let home = Home::new();
     let preload = home.0.join("fork-lock.so");

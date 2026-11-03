@@ -337,7 +337,8 @@ Added
    scripts. Keep each Workspace's operations sequential.
 7. **Clean up:** commit or discard, then unmount every Workspace. Its Sandbox closes
    itself two minutes after its last Workspace is gone; `sandbox.close` a Sandbox you
-   created. With `LAYERFS_TRACE` set, save a Sandbox's daemon log while it runs with
+   created, and `sandbox.close(id, true)` when a stuck Workspace or a silent daemon
+   blocks that (it discards uncommitted work). With `LAYERFS_TRACE` set, save a Sandbox's daemon log while it runs with
    `backend.daemon.sandbox.get_log`, as described in
    [daemon logs](references/methods/workspace.md#daemon-logs); its closing deletes it.
 

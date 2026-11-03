@@ -114,7 +114,9 @@ export const CASES = [
   { name: "sandbox list_workspaces", argv: ["sandbox", "list_workspaces", "2"], sdk: (lf) => lf.sandbox.list_workspaces("2"),
     op: "sandbox.list_workspaces", sent: { sandbox: "2" }, result: { ...page, version: "1" } },
   { name: "sandbox close", argv: ["sandbox", "close", "2"], sdk: (lf) => lf.sandbox.close("2"),
-    op: "sandbox.close", sent: { sandbox: "2" }, result: { kind: "Closed", sandbox: "2" } },
+    op: "sandbox.close", sent: { sandbox: "2", force: false }, result: { kind: "Closed", sandbox: "2" } },
+  { name: "sandbox close (force)", argv: ["sandbox", "close", "2", "--force"], sdk: (lf) => lf.sandbox.close("2", true),
+    op: "sandbox.close", sent: { sandbox: "2", force: true }, result: { kind: "Closed", sandbox: "2" } },
   // the first window, and refusals: the binding's, then one the SDK makes itself
   { name: "fs read (first window)", argv: ["fs", "read", "main", "/a"], sdk: (lf) => lf.fs.read("main", "/a"),
     op: "fs.read", sent: { branch: "main", path: "/a", startLine: 1 }, result: { text: "a\n", nextLine: 2 } },
