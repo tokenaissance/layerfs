@@ -192,6 +192,21 @@ processes; commit and unmount what you need first. It is the recovery when a
 Workspace is stuck `Retained(Detach)` after a stalled unmount or when `close`
 keeps refusing `MountsActive`. A Sandbox still closes itself two minutes after
 its last Workspace is unmounted, with no call in flight.
+
+Every foreground `workspace.exec` records itself before it runs: a private
+`/tmp/layerfs-exec-<id>.record` in its Sandbox naming the Workspace, its pid
+and that pid's start time, removed when the command ends. While such a record
+names a live process, `workspace.unmount` reports its id in
+`detail.processes`: a normal unmount when the daemon refuses `Busy`, and a
+forced unmount before it does anything. `backend.daemon.process.cancel(id)`
+finds a foreground exec by that record,
+also from a client that did not start it, signals its process group, and the
+Workspace can then be unmounted normally. Refusing `force` while the record
+exists keeps it from leaving a new `Retained(Detach)`;
+`sandbox.close(sandbox, force: true)` remains the recovery for one already
+stuck `Retained(Detach)`, and for a process that daemonized and escaped the
+exec's session (it has no record after the exec ends). The image must provide
+util-linux `setsid --wait` (Debian 12 has it).
 `project.list_sandboxes(pageSize, pagePos)` lists the running ones, each
 `{ sandbox, name, image, workspaces }`, reading records and starting and
 changing nothing; `sandbox.list_workspaces(sandbox, pageSize, pagePos)` asks

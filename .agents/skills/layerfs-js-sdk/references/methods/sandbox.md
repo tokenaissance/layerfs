@@ -91,7 +91,9 @@ no recovery from the deleted container or from discarded uncommitted work.
 **Recovery:** use `close(sandbox, true)` when a Workspace is stuck `Retained(Detach)` after
 a stalled unmount and the daemon will not release it, or when a normal `close` refuses
 `MountsActive` for a Workspace that cannot be unmounted. It is also the recovery for a
-Sandbox whose daemon no longer answers: force does not need the daemon.
+Sandbox whose daemon no longer answers, and for a process that daemonized and escaped a
+foreground `exec`'s session (that process has no `/tmp` record once the exec ends). Force
+does not need the daemon.
 
 **Refusals**
 
