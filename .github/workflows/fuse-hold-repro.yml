@@ -1,0 +1,20 @@
+name: fuse-hold-repro
+on:
+  push:
+    branches: [ci/fuse-hold-repro]
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kernel and fuse device
+        run: |
+          uname -a
+          ls -l /dev/fuse || true
+      - name: run holder-ns reproducer
+        run: |
+          docker run --rm --cap-add SYS_ADMIN --device /dev/fuse \
+            --security-opt apparmor=unconfined \
+            -v "$PWD":/src -w /src python:3.12-slim \
+            python3 /src/fuse-hold-repro/repro.py --grace 2 --abort-at-deadline
