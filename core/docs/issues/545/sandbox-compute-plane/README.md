@@ -1,9 +1,9 @@
-# SandboxComputePlane — diagrams for issue #545 (v5)
+# SandboxComputePlane — diagrams for issue #545 (v6)
 
-Five Excalidraw scenes for **#545 · Sandbox compute plane**: the four-axis
-model plus the provider / storage placement derived from
+Six Excalidraw scenes for **#545 · Sandbox compute plane**: five design scenes
+on the four-axis model plus the provider / storage placement derived from
 `compute-backend-providers-and-storage.md` and
-`pi-durable-cloudflare-compute.md`.
+`pi-durable-cloudflare-compute.md`, and one implementation-status index.
 
 | Axis | Layer |
 | --- | --- |
@@ -33,9 +33,18 @@ Three revision points from the cs-infra review are drawn here:
   version, while the provider adapters are future work.
 
 Every text element and every shape label uses **Comic Shanns**
-(`fontFamily: 8`); body text is 26 px and titles are 38 px. The Architecture
-scene also carries one 18 px note badge (`provider = constructor, not kind`)
-in the `MACHINES + WORKERS` header; every other text is 26 px or 38 px.
+(`fontFamily: 8`). The five design scenes use 26 px body and 38 px titles; the
+Architecture scene also carries one 18 px note badge (`provider = constructor,
+not kind`) in the `MACHINES + WORKERS` header. The status index board uses
+16–28 px in compact cards and the same Comic Shanns face throughout.
+
+The sixth scene is the **implementation status index**, not a design scene. It
+records the 2026-11-05 audit: **6 done / 16 partial / 41 not done / 3 N/A**
+(66 checkboxes; **60 unchecked**), carries an **INDEX ONLY** badge, and routes
+delivery to sub-issues **#548–#555**. It states that 0 of the 6 checked boxes
+are #545's own delivery: 4 come from merged #535/#536 work and 2 are permanent
+invariants; B9-210 (N/A) is the third invariant. The footer reconciles
+6 checked + 60 unchecked = 66 and no longer claims 51 unchecked.
 
 | Scene | Excalidraw id | What it shows |
 | --- | --- | --- |
@@ -44,13 +53,15 @@ in the `MACHINES + WORKERS` header; every other text is 26 px or 38 px.
 | `SandboxComputePlane — Observability: B8/B10/B9` | `73d51mJ58mV` | Four read-only cards. `machine list/get` now includes `isolation` and `scheduling`; `sandbox list/get` now includes `backend` and `isolation`; `doctor` checks backend isolation capability (`capability, not "is Docker"`) instead of testing for Docker; worker health covers lease, heartbeat and restart. The bottom band records bounded queries, no start side effects and data-not-error handling. |
 | `SandboxComputePlane — Isolation & Semantics Matrix` | `75beQrV0BBW` | A six-column table — backend, isolation, kernel, guest no home, Workspace semantics, Commit semantics — across `native/namespaces`, `docker`, `VM` and `ssh`. Isolation strength and kernel sharing differ; guest-never-reads-home and LayerFS semantics are `yes` / `same` on every row. Closing line: *Isolation changes the strength. Semantics stay the same.* |
 | `SandboxComputePlane — Provider & Storage Placement` | `1mGJ8A18D9h` | Top band splits **2.0.0 GUARD** (`StoragePlacement`, no live remote SQLite, no S3 live Store) from **FUTURE ADAPTERS** (Fly, E2B, Cloudflare, Modal, Daytona, K8s, Fargate, ssh). Left: provider constructor → `Machine.kind` (isolation) + `Machine.provider` (implementation) + capability flags, then Family 1 (`worker/mount`) vs Family 2 (`remote-exec`). Centre: provider matrix for Fly, E2B, Cloudflare, Modal, Daytona, K8s, Fargate and ssh/VM with family, worker, mount, local SQLite and live PostgreSQL. Bottom left: storage placement — PostgreSQL live, Family 1 machine-local SQLite live, SQLite snapshot handoff, R2/S3 backup only, and a red **no live remote SQLite / no S3 as a live Store** bar. Bottom right: pi-durable borrow strip — intent before side effect, durable timer shape without DO, manifest snapshot, cancel by id with `TimedOut ≠ Cancelled`, identity in one place. |
+| `SandboxComputePlane — Status index` | `jhh8rntcFu` | Implementation-status **index** for #545: 6 done / 16 partial / 41 not done / 3 N/A (66 checkboxes, 60 unchecked), an **INDEX ONLY** badge, per-family counts, and delivery pointers to sub-issues #548–#555. It says 0 of the 6 checked boxes are #545's own delivery (4 from #535/#536, 2 invariants); B9-210 (N/A) is the third invariant. The footer records #543 OPEN and 6 + 60 = 66. |
 
 ## Rendering
 
 The three revised scenes (Architecture, Lifecycle, Provider & Storage) were each
 rendered twice at `maxWidth: 1250`; the two PNGs are byte-identical. The
 Observability and Isolation & Semantics Matrix PNGs are unchanged and keep
-their earlier `maxWidth: 1920` renders. The `.excalidraw` files are the full
+their earlier `maxWidth: 1920` renders; the status index was rendered at
+`maxWidth: 1600` and is 1290 × 1070. The `.excalidraw` files are the full
 `get_scene_content` documents for the live scene elements.
 
 | Scene | PNG | Canvas | PNG size | PNG sha256 (first 12) |
@@ -60,6 +71,7 @@ their earlier `maxWidth: 1920` renders. The `.excalidraw` files are the full
 | Observability | 1166 × 1040 | 1126 × 1000 | 182,726 B | — |
 | Isolation & Semantics Matrix | 1242 × 703 | 1202 × 662.5 | 127,993 B | — |
 | Provider & Storage Placement | 1240 × 1057 | 1200 × 1017.3 | 332,600 B | `f85d8e0a0bf4` |
+| Status index | 1290 × 1070 | 1250 × 1030 | 262,831 B | `3715063ea16c` |
 
 These are documentation assets for the issue; no code or runtime behavior is
 defined here.
