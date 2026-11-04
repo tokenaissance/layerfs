@@ -47,9 +47,11 @@ in the `MACHINES + WORKERS` header; every other text is 26 px or 38 px.
 
 ## Rendering
 
-All scenes were rendered twice at `maxWidth: 1250`; the two PNGs of each scene
-are byte-identical. The `.excalidraw` files are the full `get_scene_content`
-documents for the live scene elements.
+The three revised scenes (Architecture, Lifecycle, Provider & Storage) were each
+rendered twice at `maxWidth: 1250`; the two PNGs are byte-identical. The
+Observability and Isolation & Semantics Matrix PNGs are unchanged and keep
+their earlier `maxWidth: 1920` renders. The `.excalidraw` files are the full
+`get_scene_content` documents for the live scene elements.
 
 | Scene | PNG | Canvas | PNG size | PNG sha256 (first 12) |
 | --- | --- | --- | --- | --- |
