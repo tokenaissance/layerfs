@@ -67,10 +67,13 @@ pub(crate) const LEND_WAIT: Duration = ADMISSION_WAIT;
 /// call was not admitted and nothing was attempted, so opening again is
 /// safe; they name different observable causes (#540).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NotAdmitted {
+pub enum NotAdmitted {
     /// The daemon had no vacant pool slot. `retained` is exact when the
     /// advisory capacity notice arrived, and unknown when only EOF was seen.
-    NoVacantSlot { retained: Option<u8> },
+    NoVacantSlot {
+        /// Visible retained failure records, `None` when only EOF was seen.
+        retained: Option<u8>,
+    },
     /// The connection itself failed before Hello (`BrokenPipe`,
     /// `ConnectionReset`).
     ConnectionFailed,
@@ -98,7 +101,7 @@ impl NotAdmitted {
 /// meet the closed socket first (`BrokenPipe`, `ConnectionReset`). The old
 /// message claimed "other processes hold all 8 connections"; that is not
 /// knowledge the client has (#540).
-fn not_admitted(refusal: &SdkRefusal) -> Option<(NotAdmitted, &'static str)> {
+pub fn not_admitted(refusal: &SdkRefusal) -> Option<(NotAdmitted, &'static str)> {
     if refusal.code != "Failed" {
         return None;
     }
@@ -118,7 +121,7 @@ fn not_admitted(refusal: &SdkRefusal) -> Option<(NotAdmitted, &'static str)> {
 
 /// The exact refusal for a decoded advisory capacity notice. This is the
 /// precise form: it names the resource and the retained record count.
-fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
+pub fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
     match notice.reason {
         AdmissionReason::NoPoolSlot | AdmissionReason::ReservedBusy => SdkRefusal {
             code: "Capacity".to_owned(),
@@ -154,7 +157,7 @@ fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
 
 /// The exact refusal after `wait`: what the client observed, not a guess at
 /// what another process is doing.
-fn admission_refusal(wait: Duration, admission: NotAdmitted, kind: &str) -> SdkRefusal {
+pub fn admission_refusal(wait: Duration, admission: NotAdmitted, kind: &str) -> SdkRefusal {
     let message = match admission {
         NotAdmitted::NoVacantSlot { retained } => format!(
             "the Sandbox's daemon admitted no control connection for {}s: it closed the connection before Hello ({kind}), which it does when it has no vacant control slot{}. The call was not admitted; retrying is safe",

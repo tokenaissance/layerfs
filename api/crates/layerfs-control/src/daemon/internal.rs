@@ -1,5 +1,7 @@
 //! Hidden original-channel access for recovery, diagnostics and external proofs.
 pub use super::channel::{Control, ControlCause, ControlFailure, ControlPhase};
+#[doc(hidden)]
+pub use super::pool::{admission_refusal, not_admitted, notice_refusal, NotAdmitted};
 use crate::{BoundWorkspace, OperationFailure, WorkspaceApi};
 use layerfs_bridge::{
     control::{CleanupObservation, ReadyMount, WorkspaceStatus, WorkspaceToken},

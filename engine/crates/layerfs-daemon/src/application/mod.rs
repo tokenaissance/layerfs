@@ -14,4 +14,9 @@ pub use diagnostics::resources::{ResourceDiagnosticError, ResourceFailure, Resou
 pub(crate) use diagnostics::{commit_parts, namespace_values, storage_values};
 pub use failure::{ApplicationError, ConnectionFailure};
 pub use owner::Application;
-pub use retained::{RetainedFailure, RetainedSnapshot};
+#[doc(hidden)]
+pub use owner::{
+    AdmissionClass, Finished, SlotClass, SlotCounts, SlotTicket, Slots, RESERVED_SLOTS,
+};
+#[doc(hidden)]
+pub use retained::{RetainedFailure, RetainedFailures, RetainedSnapshot, LIMIT, TTL};
