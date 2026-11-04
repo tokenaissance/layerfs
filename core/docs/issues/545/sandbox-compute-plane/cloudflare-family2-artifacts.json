@@ -1,0 +1,153 @@
+{
+  "collection": "8HuLaGnNXzB",
+  "workspace": "9Zq6XgRe98z",
+  "revision": "2026-11-04 · Cloudflare Family 2 remote-exec (docs fetched 2026-11-04)",
+  "document": {
+    "path": "/Users/reina/Project/cloudflare-family2-remote-exec.md",
+    "language": "zh",
+    "sections": 8
+  },
+  "issueSectionDraft": {
+    "path": "/Users/reina/Project/cloudflare-family2-issue-section.md",
+    "note": "draft only; no GitHub write, issue #545 untouched"
+  },
+  "scenes": {
+    "architecture": {
+      "sceneId": "5oqMD3TeIm5",
+      "name": "SandboxComputePlane — Cloudflare Family 2 remote-exec",
+      "url": "https://app.excalidraw.com/s/9Zq6XgRe98z/5oqMD3TeIm5",
+      "sceneVersion": "16494e2a",
+      "canvas": {
+        "width": 1250,
+        "height": 920
+      },
+      "png": {
+        "path": "/Users/reina/Project/.layerfs-460-brief/cloudflare-family2-architecture-a853bc6b.png",
+        "sha256": "a853bc6b7aa5e0822c6e14462ec167336ad4f9f0ec751849031d4cffccee9d45",
+        "bytes": 338188,
+        "width": 1290,
+        "height": 960,
+        "note": "take_screenshot maxWidth 1920, 20 px padding per side: 1250x920 -> 1290x960, below the 1920x1080 cap"
+      },
+      "excalidraw": {
+        "path": "/Users/reina/Project/.layerfs-460-brief/cloudflare-family2-architecture-a853bc6b.excalidraw",
+        "sha256": "f5ca319e8b02c9a211c5745b84e04be63dd79e282f7f09459e844937c53d56e4",
+        "bytes": 51580,
+        "elements": 81,
+        "textElements": 51,
+        "rectangles": 25,
+        "arrows": 5
+      },
+      "verified": {
+        "twoScreenshotPassesIdentical": true,
+        "twoScreenshotPasses": [
+          {
+            "pass": 1,
+            "sha256": "a853bc6b7aa5e0822c6e14462ec167336ad4f9f0ec751849031d4cffccee9d45"
+          },
+          {
+            "pass": 2,
+            "sha256": "a853bc6b7aa5e0822c6e14462ec167336ad4f9f0ec751849031d4cffccee9d45"
+          }
+        ],
+        "dshToolScreenshotSha256": "a853bc6b7aa5e0822c6e14462ec167336ad4f9f0ec751849031d4cffccee9d45",
+        "screenshotMaxWidth": 1920,
+        "screenshotPaddingPx": 20,
+        "allTextComicShanns": true,
+        "fontFamilies": [
+          8
+        ],
+        "badFontCount": 0,
+        "fontSizes": {
+          "26": 50,
+          "38": 1
+        },
+        "titleFontPx": 38,
+        "bodyFontPx": 26,
+        "textTextOverlaps": 0,
+        "textOutsideCanvas": 0,
+        "textNotInsideContainer": 0,
+        "charAdvanceMeasured": 0.55
+      }
+    },
+    "lifecycle": {
+      "sceneId": "7jae8mEe1wy",
+      "name": "SandboxComputePlane — Cloudflare remote-exec lifecycle",
+      "url": "https://app.excalidraw.com/s/9Zq6XgRe98z/7jae8mEe1wy",
+      "sceneVersion": "eedb6846",
+      "canvas": {
+        "width": 1250,
+        "height": 920
+      },
+      "png": {
+        "path": "/Users/reina/Project/.layerfs-460-brief/cloudflare-family2-lifecycle-1da47358.png",
+        "sha256": "1da473580a1ddba91b9f84d92f098ad4bab41afef843f1646e0b0caba16d85df",
+        "bytes": 279628,
+        "width": 1290,
+        "height": 960,
+        "note": "same padding rule; below the 1920x1080 cap"
+      },
+      "excalidraw": {
+        "path": "/Users/reina/Project/.layerfs-460-brief/cloudflare-family2-lifecycle-1da47358.excalidraw",
+        "sha256": "d64ac3af2f8b305c402d9707e3837e5fddecdf7af10d4cc0b306c92d3c0f2ae4",
+        "bytes": 36762,
+        "elements": 55,
+        "textElements": 37,
+        "rectangles": 11,
+        "arrows": 7
+      },
+      "verified": {
+        "twoScreenshotPassesIdentical": true,
+        "twoScreenshotPasses": [
+          {
+            "pass": 1,
+            "sha256": "1da473580a1ddba91b9f84d92f098ad4bab41afef843f1646e0b0caba16d85df"
+          },
+          {
+            "pass": 2,
+            "sha256": "1da473580a1ddba91b9f84d92f098ad4bab41afef843f1646e0b0caba16d85df"
+          }
+        ],
+        "dshToolScreenshotSha256": "1da473580a1ddba91b9f84d92f098ad4bab41afef843f1646e0b0caba16d85df",
+        "screenshotMaxWidth": 1920,
+        "screenshotPaddingPx": 20,
+        "allTextComicShanns": true,
+        "fontFamilies": [
+          8
+        ],
+        "badFontCount": 0,
+        "fontSizes": {
+          "26": 36,
+          "38": 1
+        },
+        "titleFontPx": 38,
+        "bodyFontPx": 26,
+        "textTextOverlaps": 0,
+        "textOutsideCanvas": 0,
+        "textNotInsideContainer": 0,
+        "charAdvanceMeasured": 0.55
+      }
+    }
+  },
+  "correctionsToPriorDocs": [
+    "No fixed maximum container runtime; setInactivityTimeout caps the post-DO-silence window at 6 h and platform events can stop an instance at any time.",
+    "exec() has no built-in timeout; the 30 s figure was an SDK default, not a platform limit.",
+    "Cold start commonly 1-3 s (image size and entrypoint dependent).",
+    "Cancellation is by process handle only; kill() misses grandchild processes; a DO restart loses the handle.",
+    "Cancelling the starting request does not stop the process, and a client retry runs a second copy (documented) — evidence for no-retry / no-replay.",
+    "pty is supported (pty: true | {cols, rows}, resize), stderr forced to combined under pty.",
+    "Snapshots: writable rootfs only, immutable, 20 GB max, 30-day TTL, same image, public beta, excludes mounted filesystems.",
+    "Platform DirectoryBackup limit is about 156 GiB compressed (16 MiB parts x 10,000), not the 50 MB product limit used by pi-durable.",
+    "SSH exists as an operator path (wrangler containers ssh, Cloudflare-account authentication, no public port, does not keep a container alive); it is not a programmatic control channel and does not replace a worker or daemon."
+  ],
+  "nits": [
+    "Canvas is 1250x920 both scenes; PNGs are 1290x960 because take_screenshot adds 20 px padding per side, so no height cap applies under 1920x1080.",
+    "Text is Comic Shanns fontFamily 8 with advance = 0.550 x fontSize (measured on a scratch scene before layout, not guessed); layouts use a 34 px line pitch so text boxes never overlap.",
+    "Only two font sizes are used: 38 (title) and 26 (everything else), so the font audit has no 22/24 px exceptions.",
+    "Scene A drops drawn arrows from the storage column to avoid crossing the centre panel; the storage cards carry a text line saying who writes them instead.",
+    "Scene B shows the three side-rail connectors as short diagonal arrows in the 70 px gutter (intent markers, cancel, Unknown); no labels are attached to keep text from overlapping card borders.",
+    "Three superseded/scratch scenes were deleted from the collection after the final two were verified; only the two recorded scene IDs remain.",
+    "Scenes were written through the Excalidraw MCP endpoint and verified with get_scene_content plus two identical screenshot passes; the DSH take_screenshot tool returns the same bytes for both scenes.",
+    "The issue-section file is a local draft only: no GitHub write, no PATCH, and issue #545 was not opened or modified."
+  ]
+}
