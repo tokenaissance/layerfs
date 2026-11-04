@@ -1,24 +1,39 @@
-# SandboxComputePlane — diagrams for issue #545
+# SandboxComputePlane — diagrams for issue #545 (v3)
 
-Three Excalidraw scenes for **#545 · Sandbox compute plane: machines, backends,
-observability and lifecycle**, following the model of #533. Every text element
-and every shape/arrow label uses **Comic Shanns** (`fontFamily: 8`).
+Four Excalidraw scenes for **#545 · Sandbox compute plane**, updated to the
+four-axis model:
 
-These are **v2 readability rebuilds**. GitHub renders an issue image at roughly
-900 px wide, so the old 1880 px canvases shrank 26 px text to ~12 px. Each scene
-is now laid out on a **1126–1202 px canvas** instead of a wide one, with title
-38 px, panel labels 26 px and body 26 px (handoffs 24 px) — at ~900 px display
-width body text lands at ~19–21 px. Layouts were reflowed, not scaled.
+| Axis | Layer |
+| --- | --- |
+| Abstraction | Machine → Sandbox → Backend |
+| Isolation | process / container / VM / remote |
+| Scheduling | Worker + long-lived Sandbox |
+| Semantic boundary | Store / Commit / Branch + Workspace |
 
-| Scene | Excalidraw id | Size (scene / PNG) | What it shows |
+A Sandbox is an abstraction, not an isolation strength. `serverless` is
+scheduling, not isolation. `process` is a Backend, not a separate top-level.
+Every text element and every shape label uses **Comic Shanns**
+(`fontFamily: 8`); body text is 26 px and titles are 38 px.
+
+| Scene | Excalidraw id | What it shows |
+| --- | --- | --- |
+| `SandboxComputePlane — Architecture: machines, backends, stores` | `1ccYgtDgv9j` | Two-column architecture: caller / `layerfs-control` / one home (`machine/`, `store/`, `backup/`, no `platform/`) beside machines and workers; Sandbox → Backend → Guest with four backend cards and isolation badges (`native [process]`, `docker [container]`, `VM [VM]`, `ssh [remote]`); store routing keeps SQLite on the Store kernel, PostgreSQL in the caller, and one VM machine holding many Stores. The bottom **Four axes** strip separates abstraction, isolation, scheduling and semantic boundary, with a red note: *serverless is not isolation · process = backend · semantics do not change with backend*. |
+| `SandboxComputePlane — Lifecycle: create, exec, receipt, idle close` | `78G41Fbx0rs` | A dashed boundary separates **Agent runtime** (outside the compute plane: step / serverless / queue) from the **Compute plane**: first call → `machine.start` → worker ready → `sandbox.create` → mount Workspace → exec Bash call → **exec receipt** → idle close. A side panel states that `exec_async` / `exec_wait` / `exec_status` are launcher-owned, not the daemon; another states there is no serverless backend. Failure is `Unknown` + log, `Unresolved` via `get` / `close`, with no retry or replay. |
+| `SandboxComputePlane — Observability: B8/B10/B9` | `73d51mJ58mV` | Four read-only cards. `machine list/get` now includes `isolation` and `scheduling`; `sandbox list/get` now includes `backend` and `isolation`; `doctor` checks backend isolation capability (`capability, not "is Docker"`) instead of testing for Docker; worker health covers lease, heartbeat and restart. The bottom band records bounded queries, no start side effects and data-not-error handling. |
+| `SandboxComputePlane — Isolation & Semantics Matrix` | `75beQrV0BBW` | A six-column table — backend, isolation, kernel, guest no home, Workspace semantics, Commit semantics — across `native/namespaces`, `docker`, `VM` and `ssh`. Isolation strength and kernel sharing differ; guest-never-reads-home and LayerFS semantics are `yes` / `same` on every row. Closing line: *Isolation changes the strength. Semantics stay the same.* |
+
+## Rendering
+
+All scenes were rendered twice at `maxWidth: 1920`; the two PNGs of each scene
+are byte-identical. The `.excalidraw` files are the full
+`get_scene_content` documents (live elements only).
+
+| Scene | PNG | Scene canvas | PNG size |
 | --- | --- | --- | --- |
-| `SandboxComputePlane — Architecture` | `1ccYgtDgv9j` | 1202×1024 / 1242×1064 | A 2-column grid. Top left **CONTROL PLANE**: `caller → layerfs-control → home` (one home: `machine/`, `store/`, `backup/`, no `platform/`, guest never reads it). Top right **MACHINES + WORKERS**: `MACHINE` (native / docker / VM kinds / ssh host) and `WORKER` (one per machine, starts on first call, idle stop; no host server in the data path). Bottom left **SANDBOX → BACKEND → GUEST**: one guest Workspace per Bash call, `machine/` host layer and `backend/` guest layer. Bottom right **STORE ROUTING**: SQLite on the Store kernel, PostgreSQL in the caller, routing by records, one VM machine many Stores. A full-width **OBSERVABILITY** strip previews `machine list/get`, `sandbox list/get`, `doctor` and worker health, bounded 2 s / 5 s and never starting a machine or Sandbox. |
-| `SandboxComputePlane — Lifecycle` | `78G41Fbx0rs` | 1116×1020 / 1156×1060 | One vertical sequence with handoff callouts: `first call → machine.start → worker ready → sandbox.create → mount Workspace → exec Bash call → idle close`. Each handoff is annotated (picks a machine, starts the worker, loopback + secret, records the Sandbox, opens one Workspace, runs one Bash call). The failure strip records **no retry, no replay**, the `Unknown` error plus its log path, and `Unresolved` reconciled through `get` / `close`. |
-| `SandboxComputePlane — Observability` | `73d51mJ58mV` | 1126×1000 / 1166×1040 | A 2×2 board: `machine list/get` (kind, state, worker, lease, health, one row per machine), `sandbox list/get` (state, project, machine, backend, mounts, one row per Sandbox), `doctor` (warnings only, never starts a machine, exit 0 on warnings) and `worker health` (lease, heartbeat, restart on lost lease, loopback only), each tagged **bounded ≤ 2 s get / ≤ 5 s list**. The bottom band states the read-only guarantee: it does not start a machine or Sandbox, a timeout is a warning, and `Unknown` is data, not a failure. |
-
-The PNGs are rendered at `maxWidth: 1920`; each scene rendered twice with the
-same bytes. The `.excalidraw` files are the `get_scene_content` JSON (live
-elements).
+| Architecture | 1256 × 1057 | 1215.6 × 1016.5 | 325,525 B |
+| Lifecycle | 1220 × 919 | 1180 × 878.5 | 246,282 B |
+| Observability | 1166 × 1040 | 1126 × 1000 | 182,726 B |
+| Isolation & Semantics Matrix | 1242 × 703 | 1202 × 662.5 | 127,993 B |
 
 These are documentation assets for the issue; no code or runtime behavior is
 defined here.
