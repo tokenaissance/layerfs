@@ -16,7 +16,7 @@
 //! ```
 //!
 //! Expected: the test fails at the tenth client, before its Hello reply. The
-//! branch's `daemon_slots.rs::retained_failures_do_not_consume_control_slots`
+//! branch's `daemon_slots.rs::undecodable_records_do_not_consume_control_slots`
 //! runs the same deaths and then reaches Hello, on the daemon this branch
 //! ships. The suite in this branch cannot be built on the base: the slot
 //! types it names (`Slots`, `SlotTicket`, `RetainedFailures`, `CapacityModel`)
