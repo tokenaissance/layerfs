@@ -1,5 +1,10 @@
 //! Hidden original-channel access for recovery, diagnostics and external proofs.
 pub use super::channel::{Control, ControlCause, ControlFailure, ControlPhase};
+/// The pure admission classification behind `sandbox.get`'s refusal, kept
+/// hidden for the integration test that reaches it. The refusal text
+/// builders stay private: their wording is not a contract to assert.
+#[doc(hidden)]
+pub use super::pool::{not_admitted, NotAdmitted};
 use crate::{BoundWorkspace, OperationFailure, WorkspaceApi};
 use layerfs_bridge::{
     control::{CleanupObservation, ReadyMount, WorkspaceStatus, WorkspaceToken},
