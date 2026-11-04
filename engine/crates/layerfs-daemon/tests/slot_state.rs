@@ -11,10 +11,13 @@ use layerfs_bridge::{
     duplex::{ChannelError, ChannelWork, PeerEndFailure, PeerEndPhase},
 };
 use layerfs_daemon::application::{
-    AdmissionClass, ApplicationError, ConnectionFailure, Finished, RetainedFailure,
-    RetainedFailures, SlotClass, SlotTicket, Slots, LIMIT, RESERVED_SLOTS, TTL,
+    internals::{
+        AdmissionClass, Finished, RetainedFailure, RetainedFailures, SlotClass, SlotTicket, Slots,
+        LIMIT, RESERVED_SLOTS, TTL,
+    },
+    ApplicationError, ConnectionFailure,
 };
-use layerfs_daemon::control::{Served, Success};
+use layerfs_daemon::control::{ServeCause, ServeFailure, Served, Success};
 use std::time::{Duration, Instant};
 
 /// A failure after a decoded request: retained, never released.
@@ -241,6 +244,94 @@ fn record_names_the_cause_request_and_reply_state() {
     assert!(line.contains("class: \"pool\""), "{line}");
     assert!(line.contains("owner:"), "{line}");
     assert!(line.contains("expires_in_ms:"), "{line}");
+}
+
+/// A worker that ends without an explicit finish releases its slot and
+/// records the abandonment exactly once. `SlotGuard::drop` ends through this
+/// same `Slots::abandon`; the wiring from a real dropped guard to this call
+/// has no external test (a panic is caught and finished explicitly, and a
+/// thread spawn failure cannot be provoked from outside the daemon).
+#[test]
+fn abandoning_a_slot_releases_it_and_records_the_drop_once() {
+    let mut slots = Slots::new(1 + RESERVED_SLOTS);
+    let now = Instant::now();
+    let ticket = slots.admit(AdmissionClass::ControlPool).unwrap();
+    match slots.abandon(ticket, "daemon:pid:layerfs-control-0", now) {
+        Finished::Retained(record) => {
+            assert_eq!(record.slot, ticket.index);
+            assert_eq!(record.class, "pool");
+            assert_eq!(record.generation, ticket.generation);
+            assert_eq!(record.request, None);
+            assert_eq!(record.received_bytes, None);
+            assert!(!record.reply_sent);
+            assert!(
+                record.cause.contains("dropped before completion"),
+                "{}",
+                record.cause
+            );
+        }
+        _ => panic!("an abandoned slot was not recorded as a retained failure"),
+    }
+    let counts = slots.counts();
+    assert_eq!(counts.pool_running, 0);
+    assert_eq!(counts.pool_vacant, 1);
+    // A second drop of the same ticket is stale: the record is never doubled.
+    assert!(matches!(
+        slots.abandon(ticket, "daemon:pid:layerfs-control-0", now),
+        Finished::Stale
+    ));
+    assert_eq!(slots.snapshot(now).failures.len(), 1);
+}
+
+/// A decoded call whose answer never left the daemon keeps custody: the slot
+/// is released and the record names the request with `reply_sent: false`.
+///
+/// The failure is the one `connection()` builds when `answer_call` fails
+/// after a decoded call (`ApplicationError::Control` around the original
+/// `Served`). The socket-level send failure itself is not reproduced here;
+/// no real-process test can lose a reply deterministically.
+#[test]
+fn decoded_request_without_a_reply_is_retained() {
+    let mut slots = Slots::new(1 + RESERVED_SLOTS);
+    let now = Instant::now();
+    let ticket = slots.admit(AdmissionClass::ControlPool).unwrap();
+    let failure = ConnectionFailure {
+        slot: ticket.index,
+        received: None,
+        original: None,
+        cause: ApplicationError::Control(Box::new(ServeFailure {
+            original: Some(Served {
+                call: Call {
+                    id: 1,
+                    request: Request::EndSession,
+                },
+                outcome: Ok(Success {
+                    reply: Reply::SessionEnded,
+                    commit: None,
+                    observation_failure: None,
+                    kernel: None,
+                }),
+            }),
+            received: None,
+            cause: ServeCause::Channel(ChannelError::Io(std::io::Error::from(
+                std::io::ErrorKind::BrokenPipe,
+            ))),
+            fence_error: None,
+        })),
+        fence_error: None,
+        diagnostic_error: None,
+    };
+    let record = RetainedFailure::describe(&failure, ticket.class, ticket.generation, "owner");
+    assert_eq!(record.request, Some("end-session"));
+    assert!(!record.reply_sent);
+    match slots.finish(ticket, Err(failure), Some(record), now) {
+        Finished::Retained(record) => {
+            assert_eq!(record.request, Some("end-session"));
+            assert!(!record.reply_sent);
+        }
+        _ => panic!("a decoded request without a reply was not retained"),
+    }
+    assert_eq!(slots.counts().pool_vacant, 1);
 }
 
 /// A ticket is only valid for the generation it was admitted under.

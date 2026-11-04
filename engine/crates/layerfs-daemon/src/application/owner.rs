@@ -193,6 +193,23 @@ impl Slots {
         }
     }
 
+    /// The release a worker performs when it ends without an explicit
+    /// `finish`: its guard was dropped during an unwind or before its thread
+    /// started. The slot is released and the abandonment is recorded exactly
+    /// once, like any other retained failure.
+    pub fn abandon(&mut self, ticket: SlotTicket, owner: &str, now: Instant) -> Finished {
+        let failure = ConnectionFailure {
+            slot: ticket.index,
+            received: None,
+            original: None,
+            cause: ApplicationError::Worker("dropped before completion".to_owned()),
+            fence_error: None,
+            diagnostic_error: None,
+        };
+        let record = RetainedFailure::describe(&failure, ticket.class, ticket.generation, owner);
+        self.finish(ticket, Err(failure), Some(record), now)
+    }
+
     pub fn snapshot(&mut self, now: Instant) -> RetainedSnapshot {
         self.retained.snapshot(now)
     }

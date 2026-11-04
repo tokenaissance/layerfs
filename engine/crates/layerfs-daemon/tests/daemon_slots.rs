@@ -1,7 +1,7 @@
 //! #547 regression coverage for the real daemon's control-slot custody.
 //!
-//! #543 deleted the inline tests that proved #540: eight connections that die
-//! after their first decoded request must not remove admission capacity, no
+//! #543 deleted the inline tests that proved #540: connections whose received
+//! record the daemon cannot decode must not remove admission capacity, no
 //! vacant slot must answer with the advisory capacity notice instead of a
 //! bare EOF, and a failure storm must neither deadlock nor leak a slot.
 //!
@@ -39,8 +39,9 @@ const CONNECTIONS: u16 = 8;
 /// Deaths past every slot (the pool plus the reserved one), so a daemon that
 /// retains a failed slot runs out of admission capacity.
 const ROUNDS: usize = CONNECTIONS as usize + 4;
-/// Sends enough bytes that the daemon decodes a received record and retains
-/// its exact failure, then disappears without reading a reply.
+/// A record that is received but fails `InitialRecord::decode`, so the worker
+/// retains the exact failure. It is not a decoded request: the daemon executes
+/// nothing for it.
 const DIE: &[u8] = b"client-died-before-reading-reply";
 
 /// One real daemon executable and the directory holding its protected files.
@@ -221,11 +222,15 @@ fn wait_for_log(path: &Path, needle: &str, count: usize) {
     }
 }
 
-/// Eight clients send a recorded request and die before reading a reply.
-/// Every retained failure must free its slot: a ninth authenticated client is
+/// Clients send a record the daemon cannot decode and then disappear. Every
+/// retained failure must free its slot: a fresh authenticated client is
 /// admitted, the pool is whole, and one log line names each failure (#540).
+///
+/// The received bytes fail `InitialRecord::decode`, so the record shows
+/// `request: None` and `reply_sent: false`; this is not the decoded-request
+/// reply-lost path (#540's field failure), which has no real-process test.
 #[test]
-fn retained_failures_do_not_consume_control_slots() {
+fn undecodable_records_do_not_consume_control_slots() {
     let daemon = start("slots", 2000);
     for round in 0..ROUNDS {
         let mut connection = connect(daemon.address);

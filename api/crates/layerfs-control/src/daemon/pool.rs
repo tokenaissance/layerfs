@@ -121,7 +121,7 @@ pub fn not_admitted(refusal: &SdkRefusal) -> Option<(NotAdmitted, &'static str)>
 
 /// The exact refusal for a decoded advisory capacity notice. This is the
 /// precise form: it names the resource and the retained record count.
-pub fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
+pub(crate) fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
     match notice.reason {
         AdmissionReason::NoPoolSlot | AdmissionReason::ReservedBusy => SdkRefusal {
             code: "Capacity".to_owned(),
@@ -157,7 +157,7 @@ pub fn notice_refusal(notice: AdmissionNotice) -> SdkRefusal {
 
 /// The exact refusal after `wait`: what the client observed, not a guess at
 /// what another process is doing.
-pub fn admission_refusal(wait: Duration, admission: NotAdmitted, kind: &str) -> SdkRefusal {
+pub(crate) fn admission_refusal(wait: Duration, admission: NotAdmitted, kind: &str) -> SdkRefusal {
     let message = match admission {
         NotAdmitted::NoVacantSlot { retained } => format!(
             "the Sandbox's daemon admitted no control connection for {}s: it closed the connection before Hello ({kind}), which it does when it has no vacant control slot{}. The call was not admitted; retrying is safe",

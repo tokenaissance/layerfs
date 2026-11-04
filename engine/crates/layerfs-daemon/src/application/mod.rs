@@ -6,6 +6,8 @@ mod connection;
 mod diagnostics;
 mod failure;
 mod filesystem;
+#[doc(hidden)]
+pub mod internals;
 mod owner;
 mod retained;
 mod serve;
@@ -14,9 +16,3 @@ pub use diagnostics::resources::{ResourceDiagnosticError, ResourceFailure, Resou
 pub(crate) use diagnostics::{commit_parts, namespace_values, storage_values};
 pub use failure::{ApplicationError, ConnectionFailure};
 pub use owner::Application;
-#[doc(hidden)]
-pub use owner::{
-    AdmissionClass, Finished, SlotClass, SlotCounts, SlotTicket, Slots, RESERVED_SLOTS,
-};
-#[doc(hidden)]
-pub use retained::{RetainedFailure, RetainedFailures, RetainedSnapshot, LIMIT, TTL};

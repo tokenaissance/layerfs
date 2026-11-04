@@ -1,6 +1,6 @@
 //! Bounded real authenticated connection workers and retained original failures.
 use super::{
-    owner::{AdmissionClass, Finished, SlotClass, SlotTicket},
+    owner::{AdmissionClass, Finished, SlotClass, SlotTicket, Slots},
     retained::RetainedFailure,
     Application, ApplicationError, ConnectionFailure,
 };
@@ -74,6 +74,22 @@ struct SlotGuard {
     done: bool,
 }
 
+/// Runs one terminal transition under the state lock and logs its outcome.
+/// Poison recovery here only releases the slot and records; normal admission
+/// still reports `Poisoned` rather than trusting corrupt state.
+fn release(application: &Application, end: impl FnOnce(&mut Slots) -> Finished) {
+    let finished = {
+        let mut state = application
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let finished = end(&mut state.slots);
+        application.changed.notify_all();
+        finished
+    };
+    log_finished(finished);
+}
+
 impl SlotGuard {
     fn finish(&mut self, result: Result<(), ConnectionFailure>) {
         if self.done {
@@ -89,35 +105,22 @@ impl SlotGuard {
                 &self.owner,
             )
         });
-        // Poison recovery here only releases the slot and records; normal
-        // admission still reports `Poisoned` rather than trusting corrupt state.
-        let finished = {
-            let mut state = self
-                .application
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let finished = state
-                .slots
-                .finish(self.ticket, result, prebuilt, Instant::now());
-            self.application.changed.notify_all();
-            finished
-        };
-        log_finished(finished);
+        let ticket = self.ticket;
+        release(&self.application, |slots| {
+            slots.finish(ticket, result, prebuilt, Instant::now())
+        });
     }
 }
 
 impl Drop for SlotGuard {
     fn drop(&mut self) {
         if !self.done {
-            self.finish(Err(ConnectionFailure {
-                slot: self.ticket.index,
-                received: None,
-                original: None,
-                cause: ApplicationError::Worker("dropped before completion".to_owned()),
-                fence_error: None,
-                diagnostic_error: None,
-            }));
+            self.done = true;
+            let ticket = self.ticket;
+            let owner = self.owner.as_str();
+            release(&self.application, |slots| {
+                slots.abandon(ticket, owner, Instant::now())
+            });
         }
     }
 }
