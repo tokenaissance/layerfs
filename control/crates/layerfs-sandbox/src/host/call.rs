@@ -17,6 +17,9 @@ pub enum Op {
     SandboxCreate,
     /// `sandbox.close`: stops it.
     SandboxClose,
+    /// `sandbox.destroy`: deletes only its data plane, for an invisible
+    /// holder that exec records cannot see.
+    SandboxDestroy,
     /// `sandbox.list_workspaces`: its daemon's Workspace list.
     ListWorkspaces,
     /// `workspace.mount`.
@@ -35,9 +38,10 @@ pub enum Op {
 
 /// Every host operation and the name a request carries (`op`). A
 /// machine's worker runs exactly these.
-pub const OPS: [(Op, &str); 9] = [
+pub const OPS: [(Op, &str); 10] = [
     (Op::SandboxCreate, "sandbox.create"),
     (Op::SandboxClose, "sandbox.close"),
+    (Op::SandboxDestroy, "sandbox.destroy"),
     (Op::ListWorkspaces, "sandbox.list_workspaces"),
     (Op::Mount, "workspace.mount"),
     (Op::Exec, "workspace.exec"),
@@ -98,6 +102,8 @@ pub enum Call {
         force: bool,
         held: Option<Vec<String>>,
     },
+    /// `sandbox.destroy`: delete only the Sandbox's data plane.
+    Destroy,
     /// `sandbox.list_workspaces`, with the Workspace `path` it may name.
     ListWorkspaces { path: Option<String> },
     /// `workspace.mount(branch, { name })`.
@@ -148,6 +154,7 @@ impl Call {
         match self {
             Self::Create { .. } => Op::SandboxCreate,
             Self::Close { .. } => Op::SandboxClose,
+            Self::Destroy => Op::SandboxDestroy,
             Self::ListWorkspaces { .. } => Op::ListWorkspaces,
             Self::Mount { .. } => Op::Mount,
             Self::Exec { .. } => Op::Exec,
