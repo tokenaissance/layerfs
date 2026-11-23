@@ -4,7 +4,7 @@ CREATE TABLE store_lane (
 INSERT INTO store_lane (id) VALUES (1);
 CREATE TABLE store_policy (
  id bigint PRIMARY KEY CHECK (id = 1),
- schema_version bigint NOT NULL CHECK (schema_version = 2),
+ schema_version bigint NOT NULL CHECK (schema_version = 3),
  format_profile bigint NOT NULL CHECK (format_profile = 1),
  small_file_threshold_bytes bigint NOT NULL CHECK (small_file_threshold_bytes BETWEEN 131072 AND 1048576),
  whole_file_delta_max_depth bigint NOT NULL CHECK (whole_file_delta_max_depth BETWEEN 0 AND 50),
@@ -70,7 +70,7 @@ CREATE TABLE history_meta (
  catalog_incarnation bigint NOT NULL CHECK (catalog_incarnation BETWEEN 1 AND 9223372036854775807),
  binding_key bytea NOT NULL CHECK (octet_length(binding_key) BETWEEN 1 AND 128),
  identity_format bigint NOT NULL CHECK (identity_format = 3),
- schema_version bigint NOT NULL CHECK (schema_version = 2),
+ schema_version bigint NOT NULL CHECK (schema_version = 3),
  next_history_serial bigint NOT NULL DEFAULT 1,
  schema_source text NOT NULL,
  schema_definition text NOT NULL

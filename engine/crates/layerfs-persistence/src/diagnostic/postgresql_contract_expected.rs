@@ -1,4 +1,4 @@
-//! Normative schema-2 live-object signatures; generated from the shipped DDL.
+//! Normative schema-3 live-object signatures; generated from the shipped DDL.
 //! PostgreSQL 17 deparse, whitespace normalized; healthy DDL fixtures verify drift.
 pub(super) const EXPECTED: &[(&str, &str, &str, &str)] = &[
     ("C", "absorbed", "absorbed_depth_check", "CHECK (depth >= 1)"),
@@ -61,7 +61,7 @@ pub(super) const EXPECTED: &[(&str, &str, &str, &str)] = &[
     ("C", "history_meta", "history_meta_id_check", "CHECK (id = 1)"),
     ("C", "history_meta", "history_meta_identity_format_check", "CHECK (identity_format = 3)"),
     ("C", "history_meta", "history_meta_pkey", "PRIMARY KEY (id)"),
-    ("C", "history_meta", "history_meta_schema_version_check", "CHECK (schema_version = 2)"),
+    ("C", "history_meta", "history_meta_schema_version_check", "CHECK (schema_version = 3)"),
     ("C", "init_entry", "init_entry_canonical_position_check", "CHECK (canonical_position > 0)"),
     ("C", "init_entry", "init_entry_content_root_check", "CHECK (octet_length(content_root) = 32)"),
     ("C", "init_entry", "init_entry_host_identity_check", "CHECK (octet_length(host_identity) = 60)"),
@@ -154,7 +154,7 @@ pub(super) const EXPECTED: &[(&str, &str, &str, &str)] = &[
     ("C", "store_policy", "store_policy_next_ordinal_check", "CHECK (next_ordinal >= 1 AND next_ordinal <= '4294967296'::bigint)"),
     ("C", "store_policy", "store_policy_next_pack_id_check", "CHECK (next_pack_id > 0)"),
     ("C", "store_policy", "store_policy_pkey", "PRIMARY KEY (id)"),
-    ("C", "store_policy", "store_policy_schema_version_check", "CHECK (schema_version = 2)"),
+    ("C", "store_policy", "store_policy_schema_version_check", "CHECK (schema_version = 3)"),
     ("C", "store_policy", "store_policy_small_file_threshold_bytes_check", "CHECK (small_file_threshold_bytes >= 131072 AND small_file_threshold_bytes <= 1048576)"),
     ("C", "store_policy", "store_policy_whole_file_delta_max_depth_check", "CHECK (whole_file_delta_max_depth >= 0 AND whole_file_delta_max_depth <= 50)"),
     ("C", "store_totals", "store_totals_canonical_check", "CHECK (canonical >= 0)"),
