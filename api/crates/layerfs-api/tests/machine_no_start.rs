@@ -2,8 +2,11 @@
 //! a stopped Lima machine holding a Store, a project and a Sandbox (a
 //! stand-in `limactl` that reports it stopped and logs every command),
 //! every `*.list`, `*.get` and `*.status` call and `machine.platforms`
-//! answers from records and live probes. `sandbox.get` answers the record
-//! with no Workspaces and why; `workspace.status` is refused `Unavailable`.
+//! answers from records and live probes; `project.get` must list the Store's
+//! live projects through the stopped machine's worker, so it refuses
+//! `Unavailable` with the start hint and starts nothing. `sandbox.get` answers
+//! the record with no Workspaces and why; `workspace.status` is refused
+//! `Unavailable`.
 //! Nothing ran a start: no `start.lock`, no `limactl start`, no
 //! `worker.json`. The same holds with a stale `worker.json` that nothing
 //! answers. One test, because it sets the process's environment.
@@ -96,7 +99,6 @@ fn every_read(home: &Path) {
         ("store.get", vec![("name", "shop")]),
         ("store.status", vec![("name", "shop")]),
         ("project.list", vec![]),
-        ("project.get", vec![("project", "shop/api")]),
         ("sandbox.list", vec![]),
         ("backup.list", vec![]),
     ] {
@@ -117,6 +119,13 @@ fn every_read(home: &Path) {
     );
     let machine = call(home, "machine.get", &[("name", "dev")]).unwrap();
     assert_eq!(machine.get_text("state"), Some("stopped"), "{machine:?}");
+
+    // `project.get` reads the Store's live project list through the machine's
+    // worker. With the machine stopped that read refuses `Unavailable` with
+    // the start hint; it starts nothing, which is what this test pins.
+    let (code, message) = call(home, "project.get", &[("project", "shop/api")]).unwrap_err();
+    assert_eq!(code, "Unavailable", "{message}");
+    assert!(message.contains("layerfs machine start dev"), "{message}");
 
     let got = call(home, "sandbox.get", &[("name", "s1")]).unwrap();
     assert_eq!(got.get_text("name"), Some("s1"));
