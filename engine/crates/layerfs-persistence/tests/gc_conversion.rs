@@ -210,6 +210,30 @@ fn the_converted_store_opens_and_the_home_holds_the_old_authority() {
     let handles = writable(&target).expect("the converted Store opens as schema version 3");
     drop(handles);
     let sql = rusqlite::Connection::open(&target).unwrap();
+    assert_eq!(
+        sql.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        39
+    );
+    for table in ["gc_audit", "gc_machine_authority", "gc_sandbox_tombstone"] {
+        let count: i64 = sql
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?1",
+                rusqlite::params![table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "{table} is dropped in the target");
+    }
+    let sequence: i64 = sql
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='sqlite_sequence'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(sequence, 0, "gc_audit's sequence table is gone");
+}
 
 /// The converted Store is usable by the phase-4 GC surface: a mount intent
 /// registers on the lean schema, the operator release retains its `done` row,
@@ -280,30 +304,6 @@ fn the_converted_store_serves_the_operator_audit() {
     assert_eq!(page.items[0].op_id, [0x51; 16]);
     assert_eq!(page.items[0].evidence.as_deref(), Some(evidence));
     assert_eq!(page.items[0].phase.as_deref(), Some("bind"));
-}
-    assert_eq!(
-        sql.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        39
-    );
-    for table in ["gc_audit", "gc_machine_authority", "gc_sandbox_tombstone"] {
-        let count: i64 = sql
-            .query_row(
-                "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?1",
-                rusqlite::params![table],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 0, "{table} is dropped in the target");
-    }
-    let sequence: i64 = sql
-        .query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE name='sqlite_sequence'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(sequence, 0, "gc_audit's sequence table is gone");
 }
 
 #[test]
