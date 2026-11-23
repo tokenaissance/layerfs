@@ -73,10 +73,7 @@ impl OpenArgs {
     pub fn of_record(home: &Path, store: &str, record: &StoreRecord) -> Result<Self> {
         let store_ref = record.store_ref()?;
         let (store_path, postgresql) = match store_ref {
-            StoreRef::Sqlite { .. } => (
-                paths::store_file(home, store).display().to_string(),
-                None,
-            ),
+            StoreRef::Sqlite { .. } => (paths::store_file(home, store).display().to_string(), None),
             StoreRef::Postgres { .. } => (
                 record.postgresql_key(home, store).display().to_string(),
                 Some(PgSelection {

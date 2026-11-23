@@ -54,8 +54,8 @@ mod place;
 mod removal;
 pub(crate) use authority::{reconcile_machine, release, release_done, release_fenced};
 pub(crate) use lease::renew_lease;
-pub use place::{has_place_view, with_place_view};
 pub(crate) use place::PlaceView;
+pub use place::{has_place_view, with_place_view};
 pub(crate) use removal::{delete_stack, intents, remove_branch, remove_path};
 
 const INSERT: &str = "gc_intent_insert";
@@ -881,11 +881,7 @@ impl HistoryProvider {
 /// Writes one retained `done` row directly: the release/done path without a
 /// live intent. The owner and place columns stay NULL, so the row never
 /// blocks a mount, and admission filters `state <> 'done'`.
-fn record_done_in(
-    tx: &Transaction<'_>,
-    intent: &GcIntent,
-    evidence: &str,
-) -> HistoryResult<bool> {
+fn record_done_in(tx: &Transaction<'_>, intent: &GcIntent, evidence: &str) -> HistoryResult<bool> {
     let rows = tx.query(
         DONE_INSERT,
         params![
@@ -916,10 +912,7 @@ pub(crate) fn record_done(
 /// Deletes the retained `done` rows the operator exported, and only those:
 /// each delete names one op and keeps filtering `state = 'done'`, so a live
 /// intent is never removed by a prune. Answers how many rows went.
-pub(crate) fn prune_done(
-    provider: &HistoryProvider,
-    op_ids: &[[u8; 16]],
-) -> HistoryResult<u64> {
+pub(crate) fn prune_done(provider: &HistoryProvider, op_ids: &[[u8; 16]]) -> HistoryResult<u64> {
     provider.write(|tx| {
         let mut removed = 0u64;
         for op_id in op_ids {

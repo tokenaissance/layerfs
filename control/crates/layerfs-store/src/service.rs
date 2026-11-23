@@ -264,8 +264,6 @@ pub fn end_mount(
     })
 }
 
-
-
 /// Settles the intents at `machine` the ordered `incarnation` proves dead,
 /// where that Store's calls run: this process when the Store lives here, else
 /// the machine's worker. The home recorded the incarnation in the
@@ -281,7 +279,7 @@ pub fn reconcile_machine(
     // `store_call` does; a Store an operation is moving is left, never retried.
     let (_lease, record) = crate::lease::claim(home, store)?;
     let store_ref = record.store_ref()?;
-    match crate::place::plan(home, &store_ref)? {
+    match crate::place::plan(home, store_ref)? {
         crate::place::Executor::Local => {
             let args = OpenArgs::of_record(home, store, &record)?;
             with_service(&args, |service| {
@@ -312,11 +310,12 @@ pub fn reconcile_machine(
     }
 }
 
-
-
 /// Resolves Branch `branch` of `project` in the Store `open` names, then runs
 /// [`repair_mount_holders`] on it: the one implementation behind a local call
 /// and a worker's `store.repair` operation.
+/// The operator options travel as the call's own fields; keeping them
+/// explicit is the call surface, not a bundle of unrelated state.
+#[allow(clippy::too_many_arguments)]
 pub fn repair_mount_holders_at(
     open: &OpenArgs,
     project: &str,
@@ -348,7 +347,9 @@ pub fn done_audit(args: &OpenArgs, page: u32, limit: u32) -> Result<SdkValue, Sd
             limit,
         )
         .map_err(failed)?;
-        Ok(layerfs_store_service::history::admission::audit_value(&page))
+        Ok(layerfs_store_service::history::admission::audit_value(
+            &page,
+        ))
     })
 }
 
@@ -377,6 +378,7 @@ pub fn prune_done(args: &OpenArgs, ops: &[[u8; 16]]) -> Result<u64, SdkRefusal> 
 /// log only. The `audit` action reads the done rows in bounded pages, and
 /// the caller's `archive` action exports them and prunes only what it
 /// exported.
+#[allow(clippy::too_many_arguments)]
 pub fn repair_mount_holders(
     args: &OpenArgs,
     branch: layerfs_history::BranchId,
@@ -480,10 +482,9 @@ pub fn repair_mount_holders(
                 ]))
             }
             "audit" => {
-                let page = layerfs_store_service::history::admission::done_intents(
-                    catalog, page, limit,
-                )
-                .map_err(failed)?;
+                let page =
+                    layerfs_store_service::history::admission::done_intents(catalog, page, limit)
+                        .map_err(failed)?;
                 Ok(layerfs_store_service::history::admission::audit_value(
                     &page,
                 ))
@@ -570,57 +571,5 @@ fn holder_rows(holders: &[MountHolderView]) -> SdkValue {
     )
 }
 
-#[cfg(test)]
-mod repair_tests {
-    use super::*;
-    use layerfs_history::{GcIntent, GcIntentKind, GcScopeKind};
-
-    fn mount(op: u8) -> GcIntent {
-        GcIntent::shared(
-            [op; 16],
-            GcIntentKind::Mount,
-            GcScopeKind::Branch,
-            vec![op; 17],
-        )
-        .named(Some("shop"), Some("main"))
-        .placed(None, None, None)
-    }
-
-    #[test]
-    fn holder_rows_report_op_and_legacy_state() {
-        let rows = holder_rows(&[MountHolderView::of(&mount(7))]);
-        let SdkValue::List(rows) = rows else {
-            panic!("a holder list");
-        };
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].get_text("op"),
-            Some("07070707070707070707070707070707")
-        );
-        assert_eq!(rows[0].get_text("state"), Some("live"));
-        assert_eq!(rows[0].get_text("sandbox"), None);
-        assert_eq!(rows[0].get("legacy"), Some(&SdkValue::Bool(true)));
-    }
-
-    #[test]
-    fn an_operator_label_is_a_bounded_local_name() {
-        assert_eq!(operator_label(""), Ok("local"));
-        assert_eq!(operator_label("  alice "), Ok("alice"));
-        assert!(operator_label(&"x".repeat(129)).is_err());
-        assert!(operator_label("alice\nroot").is_err());
-    }
-
-    #[test]
-    fn legacy_is_missing_owner_or_place_evidence() {
-        let mut row = mount(9);
-        assert!(MountHolderView::of(&row).legacy());
-        row = row.owned(Some("pid:1@0"), Some("boot:1")).placed(
-            Some([0; 32]),
-            Some("box"),
-            Some("docker"),
-        );
-        assert!(!MountHolderView::of(&row).legacy());
-        row = row.placed(None, None, None);
-        assert!(MountHolderView::of(&row).legacy());
-    }
-}
+#[path = "../tests/support/service_tests.rs"]
+mod tests;

@@ -181,12 +181,14 @@ pub fn done_audit(
             format!("diagnostic read-only Store open failed: {error}"),
         )
     })?;
-    let audit = handles.diagnostic_done_audit(page, limit).map_err(|error| {
-        refused(
-            "Unavailable",
-            format!("the retained done audit could not be read: {error}"),
-        )
-    })?;
+    let audit = handles
+        .diagnostic_done_audit(page, limit)
+        .map_err(|error| {
+            refused(
+                "Unavailable",
+                format!("the retained done audit could not be read: {error}"),
+            )
+        })?;
     let text = |s: Option<String>| s.map_or(SdkValue::Null, SdkValue::text);
     Ok(SdkValue::map([
         (

@@ -148,8 +148,6 @@ fn holders(value: &SdkValue) -> &[SdkValue] {
     }
 }
 
-
-
 /// The worker's read-only diagnostic: `store.diagnose`, with the typed
 /// `store.mount_holders` event it forwards from the machine.
 fn diagnostic_holders(placed: &worker_store::Placed) -> Vec<SdkValue> {

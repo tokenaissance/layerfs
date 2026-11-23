@@ -48,7 +48,6 @@ const TRACE_SALT: &str = ",\n trace_salt bytea NOT NULL DEFAULT decode(repeat('0
 /// gains them at open ([`add_gc`]).
 const GC: &str = include_str!("../../../sql/postgresql/gc.sql");
 
-
 /// Init's acquisition tables, created after [`SCHEMA`] in a new schema.
 const ACQUISITION: &str = include_str!("../../../sql/postgresql/acquisition.sql");
 /// The acquisition tables, in name order.
@@ -305,8 +304,6 @@ pub(crate) fn add_kept_node(session: &Session) -> Result<(), PersistenceError> {
         |tx, _| Ok(tx.batch(kept_node_table())?),
     )
 }
-
-
 
 /// Adds the GC marker, position and admission tables to a Store written
 /// before them. A table set that is not the pre-GC one is refused too.

@@ -40,11 +40,11 @@ pub use config::{
     PersistenceConfig, PostgresCheck, PostgresSelection, SqliteAcquisitionSchema, SqlitePackLayout,
     SqlitePersistenceProfile, SynchronousCommit,
 };
+pub use history::admission::{has_place_view, with_place_view};
 pub use history::{
     HistoryProvider, KeptHistory, KeptNode, KeptNodeId, KeptObjects, KeptWaste, MarkResult,
     Sequence, Spans,
 };
-pub use history::admission::{has_place_view, with_place_view};
 pub use report::{CompactStatus, POSTGRES_COMPACT_PHASES, SQLITE_COMPACT_PHASES};
 pub(crate) use storage::provider as storage_provider;
 pub(crate) use storage::publication;

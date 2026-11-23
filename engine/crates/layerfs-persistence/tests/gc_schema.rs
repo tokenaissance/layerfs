@@ -6,9 +6,7 @@
 mod support;
 
 use layerfs_history::HistoryCatalogConfig;
-use layerfs_persistence::{
-    PersistenceConfig, SqliteHandles, SqlitePersistenceProfile,
-};
+use layerfs_persistence::{PersistenceConfig, SqliteHandles, SqlitePersistenceProfile};
 use layerfs_storage::StoragePolicy;
 use support::{Temp, BINDING};
 
@@ -90,7 +88,9 @@ fn a_new_store_ships_the_authority_columns_and_no_authority_tables() {
             .unwrap();
         assert_eq!(present, 1, "gc_intent keeps {column}");
     }
-    let version: i64 = sql.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+    let version: i64 = sql
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(version, 39, "the Monolithic layout is schema version 3");
     drop(sql);
     let (source, definition) = recorded(&path);
@@ -101,7 +101,10 @@ fn a_new_store_ships_the_authority_columns_and_no_authority_tables() {
         );
     }
     for column in AUTHORITY_COLUMNS {
-        assert!(source.contains(&format!("    {column} ")), "the source keeps {column}");
+        assert!(
+            source.contains(&format!("    {column} ")),
+            "the source keeps {column}"
+        );
     }
     let sql = rusqlite::Connection::open(&path).unwrap();
     let live: String = {
@@ -163,9 +166,7 @@ fn a_released_version_2_store_is_refused_with_its_conversion() {
         let sql = rusqlite::Connection::open(&path).unwrap();
         sql.pragma_update(None, "user_version", 36).unwrap();
     }
-    let refusal = writable(&path)
-        .err()
-        .expect("a version 2 Store is refused");
+    let refusal = writable(&path).err().expect("a version 2 Store is refused");
     let text = format!("{refusal:?}");
     assert!(text.contains("schema version 2"), "{text}");
     assert!(text.contains("convert"), "{text}");

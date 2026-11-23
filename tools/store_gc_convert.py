@@ -121,8 +121,7 @@ def _scripts(version):
     for name in ("metadata.sql", "history.sql"):
         parts.append(_read_sql("sqlite", name).replace("schema_version=1", f"schema_version={version}"))
     parts.extend(
-        _read_sql("sqlite", name)
-        for name in ("lineage.sql", "merge_scratch.sql", "file_digest.sql", "gc.sql")
+        _read_sql("sqlite", name) for name in ("lineage.sql", "merge_scratch.sql", "file_digest.sql", "gc.sql")
     )
     if version >= 42:
         parts.append(_read_sql("sqlite", "acquisition", "schema.sql"))
@@ -144,9 +143,7 @@ def _old_source(version):
 
 
 def _definition(con):
-    rows = con.execute(
-        "SELECT type,name,sql FROM sqlite_schema WHERE substr(name,1,7)!='sqlite_' ORDER BY type,name"
-    )
+    rows = con.execute("SELECT type,name,sql FROM sqlite_schema WHERE substr(name,1,7)!='sqlite_' ORDER BY type,name")
     return "".join(f"{t}\n{n}\n{s}\n" for t, n, s in rows)
 
 
@@ -176,9 +173,7 @@ def _open_closed(path):
     names = _name_set(con)
     missing = [table for table in TABLES if table not in names]
     if missing:
-        refuse(
-            f"{path} has no {', '.join(missing)}; only a phase-3 Store (the three authority tables) is converted"
-        )
+        refuse(f"{path} has no {', '.join(missing)}; only a phase-3 Store (the three authority tables) is converted")
     rows = con.execute("SELECT schema_source,schema_definition FROM history_meta WHERE id=1").fetchall()
     if len(rows) != 1:
         refuse(f"{path} has no one history_meta row")
@@ -448,9 +443,7 @@ def _convert_file(source, target, version):
             leftover = Path(str(target) + suffix)
             if leftover.exists():
                 if leftover.stat().st_size:
-                    raise SystemExit(
-                        f"refused: the converted Store left a non-empty {suffix}; the target was removed"
-                    )
+                    raise SystemExit(f"refused: the converted Store left a non-empty {suffix}; the target was removed")
                 leftover.unlink()
     except BaseException:
         Path(target).unlink(missing_ok=True)
@@ -469,9 +462,7 @@ def convert(path, target, home, converted=(), gone=()):
     converted, gone = set(converted), set(gone)
     owned_gone = sorted(owned & gone)
     if owned_gone:
-        refuse(
-            f"this home owns {', '.join(owned_gone)}; convert it, do not declare it gone"
-        )
+        refuse(f"this home owns {', '.join(owned_gone)}; convert it, do not declare it gone")
     uncovered = sorted(known - owned - converted - gone)
     if uncovered:
         refuse(

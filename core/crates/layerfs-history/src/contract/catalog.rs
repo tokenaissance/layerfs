@@ -22,9 +22,8 @@ use crate::records::{
     AddLayerOutcome, AddLayerRequest, BranchMergeRequest, BranchRecord, BranchSnapshot,
     CommitHistoryRequest, CommitOutcome, CommitRecord, CommitRequest, ForkRequest, GcAuditPage,
     GcDeletion, GcIntent, GcReconcile, GcScopeKind, LayerHistoryRequest, LayerRecord,
-    LayerStackRecord, Page,
-    PageResult, PathRemovalOutcome, PathRemovalRecord, PathRemovalRequest, Reservation,
-    ReserveRequest, StackInitialization,
+    LayerStackRecord, Page, PageResult, PathRemovalOutcome, PathRemovalRecord, PathRemovalRequest,
+    Reservation, ReserveRequest, StackInitialization,
 };
 /// Checked inputs that establish one catalog binding.
 #[derive(Clone, Eq, PartialEq)]
@@ -500,8 +499,6 @@ pub trait HistoryCatalog: Send + Sync {
     ) -> HistoryResult<bool> {
         Err(crate::error::HistoryError::Unsupported("GC lease renewal"))
     }
-
-
 
     /// Records `incarnation` as the current place of `machine` and settles
     /// the intents that value proves dead.

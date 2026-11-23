@@ -42,9 +42,8 @@ pub use records::{
     BranchSnapshot, CommitHistoryRequest, CommitMeta, CommitOutcome, CommitRecord, CommitRequest,
     CommitStatistics, CommitVia, FileDigest, ForkRequest, ForkSource, GcAuditPage, GcDeletion,
     GcIntent, GcIntentDone, GcIntentKind, GcReconcile, GcScopeKind, InitStatistics,
-    LayerHistoryRequest, LayerRecord, MAXIMUM_AUDIT_PAGE,
-    LayerStackRecord, MergeCommit, MergeHead, MergeSide, Page, PageResult, PathRemovalKind,
-    PathRemovalOutcome, PathRemovalRecord, PathRemovalRequest, RecordKind, Reservation,
-    ReserveRequest, StackInitialization, StoreStatistics, FILE_DIGEST_WINDOW,
-    MAXIMUM_MESSAGE_BYTES, MAXIMUM_PAGE_RECORDS,
+    LayerHistoryRequest, LayerRecord, LayerStackRecord, MergeCommit, MergeHead, MergeSide, Page,
+    PageResult, PathRemovalKind, PathRemovalOutcome, PathRemovalRecord, PathRemovalRequest,
+    RecordKind, Reservation, ReserveRequest, StackInitialization, StoreStatistics,
+    FILE_DIGEST_WINDOW, MAXIMUM_AUDIT_PAGE, MAXIMUM_MESSAGE_BYTES, MAXIMUM_PAGE_RECORDS,
 };

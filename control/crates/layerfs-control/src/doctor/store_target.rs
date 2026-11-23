@@ -333,7 +333,8 @@ pub(crate) fn in_worker(
         return Err(error);
     }
     result?;
-    let holders = layerfs_store::diagnostic::mount_holders(&paths::store_file(root, name), &identity);
+    let holders =
+        layerfs_store::diagnostic::mount_holders(&paths::store_file(root, name), &identity);
     match holders {
         Ok(rows) => events(SdkValue::map([
             ("id", SdkValue::text(super::mount_holders::STORE)),
@@ -347,12 +348,8 @@ pub(crate) fn in_worker(
             ("message", SdkValue::text(error.message)),
         ]))?,
     }
-    let audit = layerfs_store::diagnostic::done_audit(
-        &paths::store_file(root, name),
-        &identity,
-        0,
-        16,
-    );
+    let audit =
+        layerfs_store::diagnostic::done_audit(&paths::store_file(root, name), &identity, 0, 16);
     match audit {
         Ok(page) => events(SdkValue::map([
             ("id", SdkValue::text(super::mount_holders::AUDIT)),

@@ -72,11 +72,7 @@ pub(crate) fn release_fenced(
 /// admission queries filter `state <> 'done'`, and `gc_intent_done` is the
 /// only read that sees the row. Returns `false` when the op has no intent, so
 /// a concurrent repair does not invent one.
-fn retain_done_in(
-    tx: &Transaction<'_>,
-    op_id: &[u8; 16],
-    evidence: &str,
-) -> HistoryResult<bool> {
+fn retain_done_in(tx: &Transaction<'_>, op_id: &[u8; 16], evidence: &str) -> HistoryResult<bool> {
     let rows = tx.query(RELEASE_DONE, params![evidence, now_ms(), op_id.as_slice()])?;
     Ok(!rows.is_empty())
 }

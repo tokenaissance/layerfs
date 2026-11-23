@@ -48,8 +48,7 @@ impl Effects for Remote {
             "project.delete.admit",
             with_place(frame.encode(), self.place.as_ref()),
             &mut |_| {},
-        )
-        {
+        ) {
             Ok(answer) => answer,
             Err(refusal) => {
                 // The request went out, so the worker may have registered the

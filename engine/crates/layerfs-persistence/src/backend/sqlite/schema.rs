@@ -124,8 +124,6 @@ fn binding_hint_table() -> &'static str {
     &HISTORY[start..end]
 }
 
-
-
 /// The query that returns a row when table `name` exists.
 fn has_table(name: &str) -> String {
     format!("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='{name}'")

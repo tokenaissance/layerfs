@@ -203,7 +203,13 @@ fn postgresql(
     // one open service per PostgreSQL Store and binding, keyed by a path no
     // file has
     let key = target.record.postgresql_key(home, &target.store);
-    let open = opened(home, target, record, key.display().to_string(), Some(postgresql));
+    let open = opened(
+        home,
+        target,
+        record,
+        key.display().to_string(),
+        Some(postgresql),
+    );
     open::run(
         method,
         &open,

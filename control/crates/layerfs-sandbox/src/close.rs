@@ -207,7 +207,7 @@ fn forget(home: &Path, events: &mut Events<'_>, name: &str, container: &str) -> 
         let _sandbox = record::lock(home, name)?;
         direct::release(home, &record);
     }
-    crate::record::retire(&home, &record)?;
+    crate::record::retire(home, &record)?;
     remove_folder(&dir)?;
     Ok(Closed::Forgotten {
         container: container.to_owned(),

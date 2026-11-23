@@ -114,7 +114,6 @@ fn seed(home: &Path) {
         let history = service.store.history();
         let stack = lookup::project(&service.store, "app")?;
 
-
         for tag in FIRST..FIRST + 6 {
             let name = format!("stuck-{}", tag - FIRST);
             engine(
@@ -415,13 +414,13 @@ fn compact(placed: &worker_store::Placed) -> Result<SdkValue, SdkRefusal> {
     )
 }
 
-fn diagnosed_row<'a>(rows: &'a [SdkValue], tag: u8) -> &'a SdkValue {
+fn diagnosed_row(rows: &[SdkValue], tag: u8) -> &SdkValue {
     rows.iter()
         .find(|row| row.get_text("operation") == Some(op_hex(tag).as_str()))
         .unwrap_or_else(|| panic!("no diagnostic holder {tag:02x}"))
 }
 
-fn previewed_row<'a>(rows: &'a [SdkValue], tag: u8) -> &'a SdkValue {
+fn previewed_row(rows: &[SdkValue], tag: u8) -> &SdkValue {
     rows.iter()
         .find(|row| row.get_text("op") == Some(op_hex(tag).as_str()))
         .unwrap_or_else(|| panic!("no previewed holder {tag:02x}"))
@@ -467,11 +466,7 @@ fn seed_reconcile(home: &Path) {
             ]),
         );
         let branch = lookup::branch(&service.store, &stack, "stuck-reconcile")?;
-        let mount = |op: u8,
-                     sandbox: &str,
-                     recorded: &str,
-                     generation: &str,
-                     boot: &str| {
+        let mount = |op: u8, sandbox: &str, recorded: &str, generation: &str, boot: &str| {
             GcIntent::shared(
                 [op; 16],
                 GcIntentKind::Mount,
@@ -734,8 +729,16 @@ fn the_live_six_of_three_hundred_thirty_one_is_repaired_removed_and_reclaimed() 
     let Some(SdkValue::List(rows)) = doctor.get("items") else {
         panic!("doctor audit items: {doctor:?}");
     };
-    assert_eq!(rows.len(), 16, "the worker audit page is bounded: {doctor:?}");
-    assert_eq!(doctor.get("has_more"), Some(&SdkValue::Bool(true)), "{doctor:?}");
+    assert_eq!(
+        rows.len(),
+        16,
+        "the worker audit page is bounded: {doctor:?}"
+    );
+    assert_eq!(
+        doctor.get("has_more"),
+        Some(&SdkValue::Bool(true)),
+        "{doctor:?}"
+    );
     let releases = rows
         .iter()
         .filter(|row| {
@@ -801,7 +804,15 @@ fn the_live_six_of_three_hundred_thirty_one_is_repaired_removed_and_reclaimed() 
         .iter()
         .filter(|row| row.get_text("evidence") == Some("action=preview;operator=alice"))
         .collect();
-    assert_eq!(releases.len(), 6, "the compaction kept the audit: {audit:?}");
-    assert_eq!(previews.len(), 13, "the compaction kept every preview: {audit:?}");
+    assert_eq!(
+        releases.len(),
+        6,
+        "the compaction kept the audit: {audit:?}"
+    );
+    assert_eq!(
+        previews.len(),
+        13,
+        "the compaction kept every preview: {audit:?}"
+    );
     placed.remove();
 }

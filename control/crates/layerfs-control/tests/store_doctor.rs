@@ -16,11 +16,11 @@ use std::{
 mod target {
     pub use layerfs_control::doctor::target::{Budget, Checks};
 }
-#[path = "../src/doctor/store_target.rs"]
-mod store_target;
 #[path = "../src/doctor/mount_holders.rs"]
 #[allow(dead_code)]
 mod mount_holders;
+#[path = "../src/doctor/store_target.rs"]
+mod store_target;
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,

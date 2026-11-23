@@ -13,7 +13,10 @@ use layerfs_history::Liveness;
 /// `exclusive` (class, id). On both backends it then holds the project epoch
 /// and scans again, settling the intents dead owners left. `scan` is the
 /// statement and its parameters; a conflict is refused as [`classify`] names
-/// it.
+/// it. The eight parameters are one transaction's own state, the two keys it
+/// takes and the one scan it runs; bundling them would hide that they always
+/// travel together and are never defaulted.
+#[allow(clippy::too_many_arguments)]
 fn admit(
     tx: &Transaction<'_>,
     provider: &HistoryProvider,

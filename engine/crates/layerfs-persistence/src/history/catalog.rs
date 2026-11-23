@@ -308,8 +308,6 @@ impl HistoryCatalog for HistoryProvider {
         super::admission::mark_uncertain(self, op_id)
     }
 
-
-
     fn gc_remove_branch(
         &self,
         branch: BranchId,
@@ -355,5 +353,4 @@ impl HistoryCatalog for HistoryProvider {
     fn gc_reconcile_machine(&self, machine: &str, incarnation: &str) -> HistoryResult<GcReconcile> {
         super::admission::reconcile_machine(self, machine, incarnation)
     }
-
 }

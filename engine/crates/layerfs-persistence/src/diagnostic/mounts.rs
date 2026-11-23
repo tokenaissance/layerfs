@@ -75,11 +75,7 @@ pub struct DoneAuditPage {
 
 /// Reads one bounded page of retained `done` rows in the diagnostic
 /// transaction. The live holder query above keeps filtering them out.
-pub(super) fn done(
-    view: &dyn View,
-    page: u32,
-    limit: u32,
-) -> Result<DoneAuditPage, BackendError> {
+pub(super) fn done(view: &dyn View, page: u32, limit: u32) -> Result<DoneAuditPage, BackendError> {
     let limit = limit.clamp(1, layerfs_history::MAXIMUM_AUDIT_PAGE);
     let offset = i64::from(page) * i64::from(limit);
     let sql = crate::backend::sqlite::session::query::history("gc_intent_done")?;

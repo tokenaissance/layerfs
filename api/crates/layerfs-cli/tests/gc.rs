@@ -111,7 +111,15 @@ fn wrong_arity_and_options_are_usage_errors() {
         &["store", "compact", "shop", "--force"],
         &["store", "repair-mount-holders"],
         &["store", "repair-mount-holders", "shop", "app", "main"],
-        &["store", "repair-mount-holders", "shop", "app", "main", "preview", "extra"],
+        &[
+            "store",
+            "repair-mount-holders",
+            "shop",
+            "app",
+            "main",
+            "preview",
+            "extra",
+        ],
         &[
             "store",
             "repair-mount-holders",

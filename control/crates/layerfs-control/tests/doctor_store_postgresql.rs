@@ -15,12 +15,11 @@ mod target {
     pub use layerfs_control::doctor::target::{Budget, Checks};
 }
 #[allow(dead_code)]
+#[path = "../src/doctor/mount_holders.rs"]
+mod mount_holders;
+#[allow(dead_code)]
 #[path = "../src/doctor/store_target.rs"]
 mod store_target;
-#[allow(dead_code)]
-#[path = "../src/doctor/mount_holders.rs"]
-#[allow(dead_code)]
-mod mount_holders;
 const BINDING: &[u8] = b"doctor-saved-pg-admission";
 fn command(container: &str, args: &[&str]) -> Output {
     let out = Command::new("docker")

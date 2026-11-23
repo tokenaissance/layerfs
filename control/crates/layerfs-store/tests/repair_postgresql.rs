@@ -283,10 +283,9 @@ fn operator_repair_round_trips_on_postgresql() {
     assert!(holders(&preview).is_empty());
     // The two releases retained their rows as the PostgreSQL Store's durable
     // operator audit; the audit read does not resolve a Branch first.
-    let audit = repair_mount_holders_at(
-        &open, "app", "main", "audit", None, false, "alice", 0, 100,
-    )
-    .expect("audit");
+    let audit =
+        repair_mount_holders_at(&open, "app", "main", "audit", None, false, "alice", 0, 100)
+            .expect("audit");
     let Some(SdkValue::List(items)) = audit.get("items") else {
         panic!("audit items: {audit:?}");
     };

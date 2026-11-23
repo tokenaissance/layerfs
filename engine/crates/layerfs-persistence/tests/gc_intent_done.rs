@@ -201,7 +201,9 @@ fn a_done_row_is_never_a_live_holder() {
     .placed(Some([10; 32]), Some("box"), Some("box"))
     .owned(Some("runtime-private"), Some("boot-private"))
     .authorized(PlaceAuthority::default());
-    history.gc_register(&mount).expect("the done row does not hold");
+    history
+        .gc_register(&mount)
+        .expect("the done row does not hold");
 }
 
 /// The durable preview: the same retained-row columns as a release, with
@@ -236,7 +238,10 @@ fn preview_retains_a_done_row_without_an_operation() {
     assert_eq!(row.project.as_deref(), Some("proj"));
     assert_eq!(row.branch.as_deref(), Some("work"));
     assert_eq!(row.phase, None);
-    assert_eq!(row.evidence.as_deref(), Some("action=preview;operator=alice"));
+    assert_eq!(
+        row.evidence.as_deref(),
+        Some("action=preview;operator=alice")
+    );
     assert_eq!(row.machine, None);
     assert_eq!(row.sandbox, None);
 
@@ -294,4 +299,3 @@ fn a_prune_deletes_only_the_named_done_rows() {
         "the live intent stays"
     );
 }
-

@@ -92,10 +92,7 @@ impl PlaceView {
     /// on this thread). The supplied view wins for every name it carries; the
     /// call's own place is the fallback for its own machine and Sandbox, so a
     /// caller that could not read a home never loses its own evidence.
-    pub(crate) fn for_intent_with(
-        intent: &GcIntent,
-        supplied: Option<&SuppliedPlaceView>,
-    ) -> Self {
+    pub(crate) fn for_intent_with(intent: &GcIntent, supplied: Option<&SuppliedPlaceView>) -> Self {
         let mut view = Self::current(supplied);
         view.fallback_machine = intent.machine.clone();
         view.fallback_incarnation = intent.machine_incarnation.clone();

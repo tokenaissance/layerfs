@@ -164,8 +164,9 @@ pub fn list_bounded(
 /// main mount scope. The name index is read directly: `args::branch` names
 /// `main` as the line and never a Branch, refusing it (spec 4.4).
 fn main_item(store: &Arc<Store>, stack: &layerfs_history::LayerStackRecord) -> SdkValue {
-    let id = recorded_main(store, stack)
-        .map_or(SdkValue::Null, |branch| SdkValue::text(hex(branch.id.as_slice())));
+    let id = recorded_main(store, stack).map_or(SdkValue::Null, |branch| {
+        SdkValue::text(hex(branch.id.as_slice()))
+    });
     SdkValue::map([
         ("name", SdkValue::text(MAIN)),
         ("id", id),

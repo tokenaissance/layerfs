@@ -145,12 +145,7 @@ fn insert_done_audit(path: &Path, branch: BranchId, op: u8, evidence: &str, upda
              ) VALUES (?1, 'mount', 'branch', ?2, NULL, 'box', 'box',
                 'proj', 'work', NULL, NULL, 'done', 0, 'release', NULL, NULL,
                 NULL, NULL, ?3, ?4)",
-            rusqlite::params![
-                [op; 16].as_slice(),
-                branch.as_slice(),
-                evidence,
-                updated_ms
-            ],
+            rusqlite::params![[op; 16].as_slice(), branch.as_slice(), evidence, updated_ms],
         )
         .unwrap();
 }
@@ -188,7 +183,10 @@ fn a_rebuild_keeps_the_retained_done_audit_rows() {
     assert_eq!(page.items.len(), 2);
     assert_eq!(page.items[0].evidence.as_deref(), Some("release one"));
     assert_eq!(page.items[1].evidence.as_deref(), Some("release two"));
-    assert!(!located(&reopened, dead), "the rebuild collected the dead pack");
+    assert!(
+        !located(&reopened, dead),
+        "the rebuild collected the dead pack"
+    );
     clean(&reopened);
 }
 
@@ -234,7 +232,10 @@ fn a_release_survives_the_rebuild_that_settles_its_run() {
     );
 
     let reopened = reopen(&path);
-    assert!(!located(&reopened, dead), "the rebuild collected the dead pack");
+    assert!(
+        !located(&reopened, dead),
+        "the rebuild collected the dead pack"
+    );
     let page = reopened.history.gc_done_intents(0, 10).unwrap();
     assert_eq!(page.items.len(), 1, "{page:?}");
     assert_eq!(page.items[0].op_id, [0x61; 16]);

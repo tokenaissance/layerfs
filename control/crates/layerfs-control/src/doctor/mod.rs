@@ -13,11 +13,11 @@
 //! one call here that changes anything (layerfs-project#180).
 mod capacity;
 mod checks;
-mod mount_holders;
 mod convert;
 pub mod leftover_fix;
 pub mod leftover_report;
 pub mod leftovers;
+mod mount_holders;
 mod report;
 mod scan;
 mod workers;
@@ -33,8 +33,8 @@ pub use target::{DoctorRequest, DoctorTarget};
 
 mod host_target;
 mod machine_target;
-mod sandbox_target;
 mod project_target;
+mod sandbox_target;
 pub(crate) use sandbox_target::worker_diagnose as diagnose_worker_sandbox;
 mod backup_target;
 mod store_target;

@@ -381,7 +381,8 @@ fn a_bound_workspace_heartbeat_extends_its_mount_lease() {
 
     bound.workspace.close().expect("close the Workspace");
     assert!(
-        !bound.workspace
+        !bound
+            .workspace
             .heartbeat(60_000)
             .expect("a closed mount reports absent"),
         "a released intent is not resurrected"
@@ -528,8 +529,8 @@ fn the_service_reconcile_settles_the_dead_mount() {
     history.gc_register(&intent).expect("admit the mount");
 
     let newer = token(20, "b");
-    let reconcile = admission::reconcile_machine(history, "machine-9", &newer)
-        .expect("the reconcile");
+    let reconcile =
+        admission::reconcile_machine(history, "machine-9", &newer).expect("the reconcile");
     assert_eq!(reconcile.settled, vec![intent.op_id]);
     assert_eq!((reconcile.held, reconcile.uncertain), (0, 0));
     let value = admission::reconcile_value(&reconcile);

@@ -4,7 +4,6 @@
 //! operator bridge for legacy/unproven mount admissions).
 mod compact;
 mod connect;
-mod repair_mount_holders;
 mod create;
 mod disconnect;
 mod get;
@@ -12,6 +11,7 @@ mod list;
 mod pull;
 mod push;
 mod remove;
+mod repair_mount_holders;
 mod stats;
 mod status;
 mod update;

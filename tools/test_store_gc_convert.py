@@ -102,12 +102,14 @@ class Conversion(unittest.TestCase):
         self.assertEqual(found["audit_rows"], 1)
 
     def test_copy_writes_home_records_and_leaves_the_store_alone(self):
-        before = digest(store(
-            self.v2,
-            machines={"native": ("p1:native:0000000000000005:aa", 5), "docker": ("worker", 6)},
-            tombstones=[("box", "native", "p1:sandbox:0000000000000007:bb", 7)],
-            audit=[(8, "reconcile", bytes(range(16)), "start")],
-        ))
+        before = digest(
+            store(
+                self.v2,
+                machines={"native": ("p1:native:0000000000000005:aa", 5), "docker": ("worker", 6)},
+                tombstones=[("box", "native", "p1:sandbox:0000000000000007:bb", 7)],
+                audit=[(8, "reconcile", bytes(range(16)), "start")],
+            )
+        )
         where = home(self.root, machines=("native",))
         report = sg.copy(self.v2, where)
         self.assertEqual(digest(self.v2), before, "the source is read only")
@@ -116,25 +118,53 @@ class Conversion(unittest.TestCase):
         self.assertEqual(report["missing"], ["docker"])
         self.assertEqual(report["audit_rows"], 1)
         record = json.loads((where / "machine/native/record.json").read_text())
-        self.assertEqual(record, {"v": 1, "name": "native", "platform": "native", "created": 1,
-                                  "incarnation": "p1:native:0000000000000005:aa"})
+        self.assertEqual(
+            record,
+            {
+                "v": 1,
+                "name": "native",
+                "platform": "native",
+                "created": 1,
+                "incarnation": "p1:native:0000000000000005:aa",
+            },
+        )
         tombstone = json.loads((where / "machine/native/sandbox-retired/box.json").read_text())
-        self.assertEqual(tombstone, {"v": 1, "name": "box", "machine": "native",
-                                     "generation": "p1:sandbox:0000000000000007:bb", "retired_ms": 7})
+        self.assertEqual(
+            tombstone,
+            {
+                "v": 1,
+                "name": "box",
+                "machine": "native",
+                "generation": "p1:sandbox:0000000000000007:bb",
+                "retired_ms": 7,
+            },
+        )
         lines = [json.loads(line) for line in (where / "log/gc-audit.jsonl").read_text().splitlines()]
-        self.assertEqual(lines, [{"seq": 1, "at_ms": 8, "action": "reconcile",
-                                  "op_id": {"hex": bytes(range(16)).hex()}, "detail": "start"}])
+        self.assertEqual(
+            lines,
+            [
+                {
+                    "seq": 1,
+                    "at_ms": 8,
+                    "action": "reconcile",
+                    "op_id": {"hex": bytes(range(16)).hex()},
+                    "detail": "start",
+                }
+            ],
+        )
         ledger = json.loads((where / "log/gc-conversion.json").read_text())
         self.assertEqual(sorted(ledger["stores"]), ["00" * 32])
         self.assertEqual(sorted(ledger["stores"]["00" * 32]["machines"]), ["native"])
 
     def test_convert_writes_a_version_three_store(self):
-        before = digest(store(
-            self.v2,
-            machines={"native": ("p1:native:0000000000000005:aa", 5)},
-            tombstones=[("box", "native", "p1:sandbox:0000000000000007:bb", 7)],
-            audit=[(9, "release", bytes(16), None)],
-        ))
+        before = digest(
+            store(
+                self.v2,
+                machines={"native": ("p1:native:0000000000000005:aa", 5)},
+                tombstones=[("box", "native", "p1:sandbox:0000000000000007:bb", 7)],
+                audit=[(9, "release", bytes(16), None)],
+            )
+        )
         where = home(self.root)
         report = sg.convert(self.v2, self.target, where)
         self.assertEqual(report["from"], 36)
@@ -196,14 +226,20 @@ class Conversion(unittest.TestCase):
         phase-3 source (the only shape an old Store wrote); no old binary is
         needed, and `inspect` refuses anything that is not exactly that shape.
         """
-        before_digest = digest(store(
-            self.v2,
-            machines={"native": ("p1:native:0000000000000005:aa", 5),
-                      "elsewhere": ("p1:worker:0000000000000006:bb", 6)},
-            tombstones=[("box", "native", "p1:sandbox:0000000000000007:cc", 7),
-                        ("lost", "elsewhere", "p1:sandbox:0000000000000008:dd", 8)],
-            audit=[(9, "release", bytes(range(16)), "operator=alice")],
-        ))
+        before_digest = digest(
+            store(
+                self.v2,
+                machines={
+                    "native": ("p1:native:0000000000000005:aa", 5),
+                    "elsewhere": ("p1:worker:0000000000000006:bb", 6),
+                },
+                tombstones=[
+                    ("box", "native", "p1:sandbox:0000000000000007:cc", 7),
+                    ("lost", "elsewhere", "p1:sandbox:0000000000000008:dd", 8),
+                ],
+                audit=[(9, "release", bytes(range(16)), "operator=alice")],
+            )
+        )
         where = home(self.root, machines=("native",))
         before = sg.inspect(self.v2)
         self.assertEqual(before["user_version"], 36)
@@ -253,8 +289,9 @@ class Conversion(unittest.TestCase):
         store(self.v2, machines={"native": ("a", 5), "elsewhere": ("b", 6)})
         where = home(self.root)
         self.assertEqual(
-            sg.main(["store_gc_convert.py", "convert", str(self.v2), str(self.target), str(where),
-                     "--gone", "elsewhere"]),
+            sg.main(
+                ["store_gc_convert.py", "convert", str(self.v2), str(self.target), str(where), "--gone", "elsewhere"]
+            ),
             0,
         )
         self.assertTrue(self.target.is_file())
@@ -298,8 +335,12 @@ class Conversion(unittest.TestCase):
         store(self.v2, machines={"native": ("old-random", 5)})
         where = home(self.root)
         record = where / "machine/native/record.json"
-        record.write_text(json.dumps({"v": 1, "name": "native", "incarnation": "p1:native:0000000000000009:cc"},
-                                     separators=(",", ":")) + "\n")
+        record.write_text(
+            json.dumps(
+                {"v": 1, "name": "native", "incarnation": "p1:native:0000000000000009:cc"}, separators=(",", ":")
+            )
+            + "\n"
+        )
         sg.copy(self.v2, where)
         self.assertEqual(json.loads(record.read_text())["incarnation"], "p1:native:0000000000000009:cc")
 

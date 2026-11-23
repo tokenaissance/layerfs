@@ -1101,7 +1101,6 @@ fn a_heartbeat_for_a_released_intent_reports_absent() {
         .expect("a released intent is absent"));
 }
 
-
 fn hex16(bytes: &[u8; 16]) -> String {
     let mut out = String::with_capacity(32);
     for byte in bytes {
