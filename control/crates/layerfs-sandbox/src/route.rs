@@ -61,6 +61,7 @@ fn host_args(
         sandbox: Some(backend.to_owned()),
         local_dir: Some(local.display().to_string()),
         container_prefix: Some(layerfs_home::names::provider_prefix(&id)),
+        legacy_prefix: Some(layerfs_home::names::legacy_provider_prefix(&id)),
         ..settings
     };
     Ok(Host {
@@ -106,8 +107,9 @@ pub fn reached(
     // machine it is, which shares its loopback
     #[cfg(feature = "machine")]
     let (url, hint) = {
+        let id = layerfs_home::home::opened(home)?.id;
         let spec =
-            layerfs_machine::machine_spec(home, &layerfs_machine::machine_of(home, machine)?)?;
+            layerfs_machine::machine_spec(home, &id, &layerfs_machine::machine_of(home, machine)?)?;
         let hint = (spec.kind == layerfs_machine::platform::Platform::AppleContainer).then_some(
             "an apple-container machine reaches a server on this host only when it listens on the container network's bridge (0.0.0.0, as Docker Desktop publishes a port), not on 127.0.0.1 alone",
         );
@@ -208,10 +210,6 @@ pub struct Asked {
     /// The image `sandbox.create` names (a digest, Docker Id or Docker
     /// reference); every other call runs the Sandbox's own.
     pub image: Option<String>,
-    /// `sandbox.create`'s `start` progress event, `(done, total)`: sent once
-    /// the image is on the machine, just before the Sandbox starts, so the
-    /// image phases come first (V19-8).
-    pub start: Option<(i64, i64)>,
 }
 
 impl From<Call> for Asked {
@@ -220,7 +218,6 @@ impl From<Call> for Asked {
             call,
             message: Message::Absent,
             image: None,
-            start: None,
         }
     }
 }
@@ -247,20 +244,7 @@ pub fn reach(
     local: Local,
 ) -> std::result::Result<Outcome, Unreached> {
     let mut unreached = None;
-    let asked = asked.into();
-    let create = asked.call.op() == Op::SandboxCreate;
-    let outcome = host_op(home, events, record, asked, local, &mut unreached);
-    // a PostgreSQL Sandbox made on a machine proves the machine reached its
-    // Store (spec v23 V23-2): recorded here, after the reply, best effort;
-    // a sqlite Store's record is left alone
-    if let (true, Ok(_), Some((store, _))) = (
-        create,
-        &outcome,
-        record.project().and_then(|p| p.split_once('/')),
-    ) {
-        let reached = layerfs_store::observed::Reach::reached();
-        layerfs_store::observed::record(home, store, Some(record.machine()), &reached);
-    }
+    let outcome = host_op(home, events, record, asked.into(), local, &mut unreached);
     match unreached {
         Some(unreached) => Err(unreached),
         None => Ok(outcome),
@@ -288,7 +272,6 @@ fn host_op(
         call,
         message,
         image,
-        start,
     } = asked;
     let op = call.op();
     // the Sandbox's name is its identity on every machine
@@ -315,11 +298,8 @@ fn host_op(
     // either Store kind (#535 §7.4)
     let mut executor = place::on_machine(&home, machine)?;
     // the image a create names: none on macOS native (R0), else resolved
-    // and copied to the machine when it does not hold it yet (R1). A copy's
-    // lock is held until this call returns, by when the Sandbox is built on
-    // the image (its recorded lower layer), so a `machine prune --unused`
-    // in between leaves the image it just copied
-    let (image, _copied) = match (op, image) {
+    // and copied to the machine when it does not hold it yet (R1)
+    let image = match (op, image) {
         (Op::SandboxCreate, Some(_)) if crate::images::host_mode(&executor) => {
             return Err(crate::images::host_only(machine))
         }
@@ -327,35 +307,21 @@ fn host_op(
             let archive = deploy::choose(&home, machine, None)?.archive;
             let docker = crate::docker::Docker::of(&home)?;
             let mut target = match &mut executor {
-                Executor::Local => crate::image_load::Target::local(&home, machine),
-                Executor::Worker(worker) => {
-                    crate::image_load::Target::worker(&home, machine, worker)
-                }
+                Executor::Local => crate::image_load::Target::Local(&home),
+                Executor::Worker(worker) => crate::image_load::Target::Worker(worker),
             };
-            let (loaded, lock) = crate::image_load::load_held(
-                &docker,
-                events,
-                &mut target,
-                archive.as_deref(),
-                &named,
-            )?;
-            (Some(loaded.id), lock)
+            let loaded =
+                crate::image_load::load(&docker, events, &mut target, archive.as_deref(), &named)?;
+            events.progress(SdkValue::map([("phase", SdkValue::text("start"))]));
+            Some(loaded.id)
         }
-        (_, image) => (image, None),
+        (_, image) => image,
     };
-    if let Some((done, total)) = start {
-        events.phase("start", Some(done), Some(total), Vec::new());
-    }
     // what the machine's record chooses; the side that runs the call
     // resolves the rest
     let choice = deploy::choose(&home, machine, image.as_deref())?;
     match executor {
         Executor::Local => {
-            // before a daemon starts on `native`, what earlier starts and
-            // removals left in its run root goes (spec v20)
-            if op == Op::SandboxCreate {
-                crate::sweep::run_root(&home);
-            }
             let key = store_path(&home, &target.store, &target.record, kind);
             if let (Some(postgresql), Op::SandboxCreate) = (&postgresql, op) {
                 reach_check(
@@ -494,11 +460,6 @@ pub fn in_worker(
         )?;
         layerfs_home::trace::step("host_args");
         return runner(host, call);
-    }
-    // before a daemon starts on this machine, what earlier starts and
-    // removals left in its run root goes (spec v20)
-    if op == Op::SandboxCreate {
-        crate::sweep::run_root(root);
     }
     // written only when it changed (#535 R5): most calls find it as it is
     let thin = StoreRecord::from_record(

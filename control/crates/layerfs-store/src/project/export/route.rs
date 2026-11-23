@@ -1,12 +1,8 @@
-//! `project.export(project, destination, { branch, at, on_progress })`:
-//! the call, its three Store routes (`native` SQLite and PostgreSQL in
-//! this process, SQLite behind a machine's worker) and the worker's side.
-//! Its answer is the exported tree's counts (`file_count`, `size`,
-//! `dir_count`, `symlink_count`) and the exported `commit` and `root`; its
-//! progress events are `{ phase, done, total }` (`prepare`, `export`,
-//! `finalize`, `done` the bytes written so far).
+//! `project.export(project, destination, { branch, on_progress })`: the
+//! call, its three Store routes (`native` SQLite and PostgreSQL in this
+//! process, SQLite behind a machine's worker) and the worker's side.
 use crate::lease;
-use crate::open_args::OpenArgs;
+use crate::open_args::{OpenArgs, PgSelection};
 use crate::place::{self, Executor, Worker};
 use crate::project::discovery::home_of;
 use crate::project::frame::ExportFrame;
@@ -17,8 +13,9 @@ use layerfs_bridge::control::{SdkRefusal, SdkValue};
 use layerfs_bridge::sdk_values::unhex;
 use layerfs_history::HistoryName;
 use layerfs_home::events::Events;
+use layerfs_home::home::paths;
 use layerfs_home::names::ProjectRef;
-use layerfs_home::outcome::{refused, Outcome};
+use layerfs_home::outcome::{refused, Outcome, View};
 use layerfs_store_service::history::MAIN;
 use std::path::Path;
 
@@ -28,7 +25,7 @@ use super::writer::LocalWriter;
 
 type Result<T> = std::result::Result<T, SdkRefusal>;
 
-/// One `project.export(project, destination, { branch, at, on_progress })`.
+/// One `project.export(project, destination, { branch, on_progress })`.
 pub struct ProjectExport {
     /// The project, `<store>/<project>`.
     pub project: ProjectRef,
@@ -36,26 +33,17 @@ pub struct ProjectExport {
     pub destination: String,
     /// The Branch whose snapshot is exported; `main` when absent.
     pub branch: Option<String>,
-    /// The Commit of the Branch's history exported instead of its head: a
-    /// full id or a prefix of 8 or more characters.
-    pub at: Option<String>,
-}
-
-/// What one export pins: its Branch and, when given, the Commit.
-#[derive(Clone, Copy)]
-struct Pin<'a> {
-    branch: &'a str,
-    at: Option<&'a str>,
 }
 
 /// Summary of the pinned snapshot and exported tree counts.
 struct SnapshotSummary {
+    snapshot: String,
     node: String,
     root: String,
     counts: Counts,
 }
 
-/// Runs `project.export(project, destination, { branch, at, on_progress })`.
+/// Runs `project.export(project, destination, { branch, on_progress })`.
 pub fn run(home: &Path, context: &mut Events<'_>, request: &ProjectExport) -> Outcome {
     let home = home.to_path_buf();
     let project = request.project.to_string();
@@ -63,38 +51,51 @@ pub fn run(home: &Path, context: &mut Events<'_>, request: &ProjectExport) -> Ou
     let destination_text = request.destination.as_str();
     let branch = request.branch.as_deref().unwrap_or(MAIN);
     validate_branch_arg(branch)?;
-    let pin = Pin {
-        branch,
-        at: request.at.as_deref(),
-    };
     let destination = check_destination(&home, destination_text)?;
     let target = resolve::target(&home, project)?;
-    ProjectRecord::read(&home, &target.store, &target.project)?
+    let project_record = ProjectRecord::read(&home, &target.store, &target.project)?
         .ok_or_else(|| refused("NoSuchProject", format!("no project {project}")))?;
     target.record.unblocked()?;
     let (lease, record) = lease::claim(&home, &target.store)?;
     let store_ref = record.store_ref()?.clone();
-    let worker = match &store_ref {
-        StoreRef::Postgres { .. } => None,
+    let summary = match &store_ref {
+        StoreRef::Postgres { .. } => export_postgres(
+            context,
+            &home,
+            &target,
+            &record,
+            branch,
+            &destination,
+            lease,
+        )?,
         StoreRef::Sqlite { .. } => match place::plan(&home, &store_ref)? {
-            Executor::Local => None,
-            Executor::Worker(worker) => Some(worker),
+            Executor::Local => export_local_sqlite(
+                context,
+                &home,
+                &target,
+                &record,
+                branch,
+                &destination,
+                lease,
+            )?,
+            Executor::Worker(worker) => export_on_worker(
+                context,
+                worker,
+                &target,
+                &record,
+                branch,
+                &destination,
+                lease,
+            )?,
         },
     };
-    let summary = match worker {
-        Some(worker) => {
-            export_on_worker(context, worker, &target, &record, pin, &destination, lease)?
-        }
-        // a sqlite Store on `native` or a PostgreSQL Store, in this process
-        // under the lease
-        None => {
-            let _lease = lease;
-            let open = OpenArgs::of_record(&home, &target.store, &record)?;
-            let open = open.with_project(&target.project);
-            export_in_process(context, &open, &target.project, pin, &destination)?
-        }
-    };
-    Ok(build_result(summary))
+    Ok(build_result(
+        project_record,
+        &record,
+        branch,
+        destination_text,
+        summary,
+    ))
 }
 
 /// Rejects invalid branch names and 66-char hex Commit/Layer identities before
@@ -118,19 +119,66 @@ fn validate_branch_arg(branch: &str) -> Result<()> {
     Ok(())
 }
 
+fn export_local_sqlite(
+    context: &mut Events<'_>,
+    home: &Path,
+    target: &Target,
+    record: &StoreRecord,
+    branch: &str,
+    dest: &Path,
+    _lease: lease::Lease,
+) -> Result<SnapshotSummary> {
+    let store_file = paths::store_file(home, &target.store);
+    let open = OpenArgs {
+        home: Some(home.to_path_buf()),
+        store: Some(target.store.clone()),
+        project: Some(target.project.clone()),
+        store_path: Some(store_file.display().to_string()),
+        store_record: Some(record.to_record().clone()),
+        postgresql: None,
+    };
+    export_in_process(context, &open, &target.project, branch, dest)
+}
+
+fn export_postgres(
+    context: &mut Events<'_>,
+    home: &Path,
+    target: &Target,
+    record: &StoreRecord,
+    branch: &str,
+    dest: &Path,
+    _lease: lease::Lease,
+) -> Result<SnapshotSummary> {
+    let url = crate::record::url(record)?;
+    let key = record.postgresql_key(home, &target.store);
+    let open = OpenArgs {
+        home: Some(home.to_path_buf()),
+        store: Some(target.store.clone()),
+        project: Some(target.project.clone()),
+        store_path: Some(key.display().to_string()),
+        store_record: Some(record.to_record().clone()),
+        postgresql: Some(PgSelection {
+            url: Some(url),
+            ..PgSelection::default()
+        }),
+    };
+    export_in_process(context, &open, &target.project, branch, dest)
+}
+
 fn export_in_process(
     context: &mut Events<'_>,
     open_args: &OpenArgs,
     project: &str,
-    pin: Pin<'_>,
+    branch: &str,
     dest: &Path,
 ) -> Result<SnapshotSummary> {
     crate::service::with_service(open_args, |service| {
-        let pinned = pin_snapshot(service, project, pin.branch, pin.at)?;
+        let pinned = pin_snapshot(service, project, branch)?;
         let mut writer = LocalWriter::start(context, dest)?;
         let counts = stream_snapshot(&pinned, &mut |part| writer.write_part(context, part))?;
         let counts = writer.finish(context, dest, counts)?;
         Ok(SnapshotSummary {
+            snapshot: pinned.label,
             node: pinned.node,
             root: pinned.root,
             counts,
@@ -143,15 +191,14 @@ fn export_on_worker(
     mut worker: Worker,
     target: &Target,
     record: &StoreRecord,
-    pin: Pin<'_>,
+    branch: &str,
     dest: &Path,
     _lease: lease::Lease,
 ) -> Result<SnapshotSummary> {
     let request = ExportFrame {
         store: layerfs_home::names::StoreName::parse(&target.store)?,
         project: target.project.clone(),
-        branch: Some(pin.branch.to_owned()),
-        at: pin.at.map(str::to_owned),
+        branch: Some(branch.to_owned()),
         store_record: Some(record.to_record().clone()),
     }
     .encode();
@@ -180,6 +227,7 @@ fn export_on_worker(
     };
     let counts = w.finish(context, dest, expected)?;
     Ok(SnapshotSummary {
+        snapshot: value.get_text("snapshot").unwrap_or("").to_owned(),
         node: value.get_text("node").unwrap_or("").to_owned(),
         root: value.get_text("root").unwrap_or("").to_owned(),
         counts,
@@ -200,9 +248,16 @@ pub fn in_worker(
     let branch = request.branch.as_deref().unwrap_or(MAIN);
     validate_branch_arg(branch)?;
     let _lease = lease::hold_locked(&root, store)?;
-    let open = OpenArgs::in_root(&root, store, request.store_record.clone()).with_project(project);
+    let open = OpenArgs {
+        home: Some(root.clone()),
+        store: Some(store.to_owned()),
+        project: Some(project.to_owned()),
+        store_path: Some(paths::store_file(&root, store).display().to_string()),
+        store_record: request.store_record.clone(),
+        postgresql: None,
+    };
     crate::service::with_service(&open, |service| {
-        let pinned = pin_snapshot(service, project, branch, request.at.as_deref())?;
+        let pinned = pin_snapshot(service, project, branch)?;
         events(SdkValue::map([("phase", SdkValue::text("prepare"))]))?;
         let counts = stream_snapshot(&pinned, &mut |part| {
             events(SdkValue::map([("part", SdkValue::Bytes(part.to_vec()))]))
@@ -219,17 +274,31 @@ pub fn in_worker(
     })
 }
 
-/// The call's answer: the exported tree's counts and the pinned node.
-fn build_result(summary: SnapshotSummary) -> SdkValue {
-    let count = |n: u64| SdkValue::Int(i64::try_from(n).unwrap_or(i64::MAX));
-    SdkValue::map([
-        ("file_count", count(summary.counts.files)),
-        ("size", count(summary.counts.bytes)),
-        ("dir_count", count(summary.counts.directories)),
-        ("symlink_count", count(summary.counts.symlinks)),
-        ("commit", SdkValue::Text(summary.node)),
+fn build_result(
+    project: ProjectRecord,
+    record: &StoreRecord,
+    branch: &str,
+    destination: &str,
+    summary: SnapshotSummary,
+) -> SdkValue {
+    let mut out = project.to_sdk(View::Full, record);
+    for (k, v) in [
+        ("branch", SdkValue::text(branch)),
+        ("snapshot", SdkValue::Text(summary.snapshot)),
+        ("node", SdkValue::Text(summary.node)),
         ("root", SdkValue::Text(summary.root)),
-    ])
+        ("destination", SdkValue::text(destination)),
+        ("files", SdkValue::Int(summary.counts.files as i64)),
+        (
+            "directories",
+            SdkValue::Int(summary.counts.directories as i64),
+        ),
+        ("symlinks", SdkValue::Int(summary.counts.symlinks as i64)),
+        ("bytes", SdkValue::Int(summary.counts.bytes as i64)),
+    ] {
+        out = layerfs_home::home::with_field(out, k, v);
+    }
+    out
 }
 
 fn worker_counts(value: &SdkValue) -> Result<Counts> {

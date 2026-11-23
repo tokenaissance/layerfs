@@ -44,7 +44,7 @@ fn exec_helper() {
         Some(home),
         "workspace.exec",
         SdkValue::map([
-            ("workspace", t(&format!("{name}:work"))),
+            ("ws", t(&format!("{name}:work"))),
             (
                 "command",
                 t(&format!(
@@ -55,26 +55,6 @@ fn exec_helper() {
         ]),
         &mut |_| {},
     );
-}
-/// `machine.stop native --force`, its long answer: a forced stop, and
-/// `native` stays `ready` (the host itself never stops).
-fn forced_stop(home: &Path) -> SdkValue {
-    let stopped = call(
-        home,
-        "machine.stop",
-        &[
-            ("machine", t("native")),
-            ("force", SdkValue::Bool(true)),
-            ("detail", SdkValue::Bool(true)),
-        ],
-    );
-    assert_eq!(stopped.get_text("machine"), Some("native"), "{stopped:?}");
-    assert_eq!(stopped.get("forced"), Some(&SdkValue::Bool(true)));
-    let record = read_record(&paths::machine_record(home, "native"))
-        .unwrap()
-        .unwrap();
-    assert_eq!(record.get_text("state"), Some("ready"));
-    stopped
 }
 fn live_case(home: &Path, name: &str, machine: bool) {
     call(
@@ -125,28 +105,33 @@ fn live_case(home: &Path, name: &str, machine: bool) {
     .unwrap();
     assert!(process.alive() && command.alive());
     if machine {
-        let stopped = forced_stop(home);
-        assert_eq!(
-            stopped.get("stopped_sandboxes"),
-            Some(&SdkValue::List(vec![t(name)])),
-            "{stopped:?}"
+        let stopped = call(
+            home,
+            "machine.stop",
+            &[("name", t("native")), ("force", SdkValue::Bool(true))],
         );
+        assert_eq!(stopped.get_text("state"), Some("ready"));
         assert_eq!(
-            call(home, "sandbox.get", &[("sandbox", t(name))]).get_text("reason"),
-            Some("missing")
+            call(home, "sandbox.get", &[("name", t(name))]).get_text("state"),
+            Some("gone")
         );
         // An explicit second stop of retained terminal records is an idempotent no-op.
-        forced_stop(home);
+        let again = call(
+            home,
+            "machine.stop",
+            &[("name", t("native")), ("force", SdkValue::Bool(true))],
+        );
+        assert_eq!(again.get_text("state"), Some("ready"));
     } else {
         let closed = call(
             home,
-            "sandbox.remove",
-            &[("sandbox", t(name)), ("force", SdkValue::Bool(true))],
+            "sandbox.close",
+            &[("name", t(name)), ("force", SdkValue::Bool(true))],
         );
         assert!(!paths::sandbox_record(home, name).exists());
         assert!(
-            closed.get("unmounted").is_some(),
-            "the Workspaces the remove ended are named"
+            closed.get("unknown").is_some(),
+            "active Workspace frontier is explicitly unknown"
         );
     }
     assert!(
@@ -199,7 +184,7 @@ fn identity_case(home: &Path) {
     let refused = layerfs_api::call(
         Some(home),
         "machine.stop",
-        SdkValue::map([("machine", t("native")), ("force", SdkValue::Bool(true))]),
+        SdkValue::map([("name", t("native")), ("force", SdkValue::Bool(true))]),
         &mut |_| {},
     )
     .unwrap_err();
@@ -223,8 +208,8 @@ fn identity_case(home: &Path) {
     write_record(&path, &original).unwrap();
     call(
         home,
-        "sandbox.remove",
-        &[("sandbox", t("moved")), ("force", SdkValue::Bool(true))],
+        "sandbox.close",
+        &[("name", t("moved")), ("force", SdkValue::Bool(true))],
     );
     assert!(!real.alive(), "the restored record's daemon ended");
 }
@@ -245,7 +230,7 @@ fn native_force_stops_live_daemon_and_command_and_detaches_mount_without_opening
             .unwrap()
             .unwrap()
             .get_text("profile"),
-        Some("normal")
+        Some("disposable")
     );
     call(
         &home,
@@ -261,20 +246,10 @@ fn native_force_stops_live_daemon_and_command_and_detaches_mount_without_opening
         &[
             ("project", t("shop/app")),
             ("name", t("work")),
-            ("from", t("main")),
+            ("from_branch", t("main")),
         ],
     );
-    // the native machine's daemon is a setting of its record
-    layerfs_api::call(
-        Some(&home),
-        "machine.update",
-        SdkValue::map([
-            ("machine", SdkValue::text("native")),
-            ("daemon", SdkValue::text(daemon.as_str())),
-        ]),
-        &mut |_| {},
-    )
-    .unwrap();
+    home::import_env(&home, &[("LAYERFS_DAEMON".to_owned(), daemon)]).unwrap();
     live_case(&home, "live", true);
     live_case(&home, "close", false);
     identity_case(&home);

@@ -67,10 +67,9 @@ impl Session {
         )
         .map_err(rows::error)?;
         source.busy_timeout(Duration::ZERO).map_err(rows::error)?;
-        // VACUUM INTO writes its output with the source connection's
-        // synchronous setting: the Store's own (NORMAL), never OFF.
-        let synchronous = self.profile.persistence.synchronous();
-        query::run(&source, &format!("PRAGMA synchronous={synchronous}"), vec![], &work)?;
+        // Disposable copy: VACUUM INTO writes its output with the source
+        // connection's synchronous setting, so nothing is synced.
+        query::run(&source, "PRAGMA synchronous=0", vec![], &work)?;
         let page_size = u64::try_from(integer(&source, "PRAGMA page_size", &work)?)
             .map_err(|_| PersistenceError::Malformed)?;
         let pages = u64::try_from(integer(&source, "PRAGMA page_count", &work)?)
@@ -105,7 +104,7 @@ impl Session {
         )
         .map_err(rows::error)?;
         copy.busy_timeout(Duration::ZERO).map_err(rows::error)?;
-        query::run(&copy, &format!("PRAGMA synchronous={synchronous}"), vec![], &work)?;
+        query::run(&copy, "PRAGMA synchronous=0", vec![], &work)?;
         let mode = query::run(&copy, "PRAGMA journal_mode=wal", vec![], &work)?
             .first()
             .ok_or(PersistenceError::Malformed)?

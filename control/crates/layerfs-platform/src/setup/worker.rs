@@ -31,7 +31,8 @@ cat /proc/sys/user/max_user_namespaces"#;
 
 /// What a launcher's shell runs before it starts a worker whose output it
 /// appends to `$LAYERFS_WORKER_LOG` ([`WORKER_LOG`]): the log's folder
-/// (0700) and file (0600), and the one rotation. A start that finds the log past 16 MiB
+/// (0700) and file (0600), a log an older build left in `/layerfs/state`
+/// moved in, and the one rotation. A start that finds the log past 16 MiB
 /// renames it to `worker.1.log`, replacing an older one; a smaller log is
 /// appended to, so the lines of the run before stay in it and its readers'
 /// positions hold across a restart. Nothing rotates it while the worker
@@ -42,6 +43,9 @@ pub(crate) fn log_start() -> String {
     format!(
         r#"( umask 077
   mkdir -p "${{LAYERFS_WORKER_LOG%/*}}"
+  if [ -f /layerfs/state/worker.log ] && [ ! -e "$LAYERFS_WORKER_LOG" ]; then
+    mv /layerfs/state/worker.log "$LAYERFS_WORKER_LOG"
+  fi
   if [ -f "$LAYERFS_WORKER_LOG" ] && [ "$(wc -c < "$LAYERFS_WORKER_LOG")" -gt {ROTATE_AT} ]; then
     mv -f "$LAYERFS_WORKER_LOG" "${{LAYERFS_WORKER_LOG%.log}}.1.log"
   fi
@@ -98,7 +102,7 @@ fi
 LAYERFS_WORKER_LOG="$3"
 {}
 {CGROUP_LEAF}
-LAYERFS_WORKER_LISTEN="$1" LAYERFS_WORKER_SECRET=$s/secret setsid nohup "$2/layerfs" worker >> "$LAYERFS_WORKER_LOG" 2>&1 < /dev/null &
+LAYERFS_WORKER_LISTEN="$1" LAYERFS_WORKER_SECRET=$s/secret LAYERFS_WORKER_INCARNATION="$4" setsid nohup "$2/layerfs" worker >> "$LAYERFS_WORKER_LOG" 2>&1 < /dev/null &
 echo $! > $s/worker.pid"#,
         log_start()
     )
@@ -125,10 +129,40 @@ pub(crate) fn prepare(spec: &Spec, guest: &Guest) -> Result<(), MachineError> {
 }
 
 /// Step 2: install missing or changed bundle files by content identity, then
-/// the machine's custom Sandbox image if absent.
+/// the machine's custom Sandbox image if absent. Legacy bundles copy per hash.
 pub(crate) fn install(spec: &Spec, guest: &Guest, bundle: &Bundle) -> Result<(), MachineError> {
     let tools = &spec.tools;
-    super::artifacts::install(spec, guest, bundle)?;
+    let marker = format!("{BUNDLE}/.sealed");
+    if !super::artifacts::install(spec, guest, bundle)?
+        && guest.read_file(tools, &marker)?.as_deref().map(str::trim) != Some(bundle.hash.as_str())
+    {
+        let stage = format!("{BUNDLE}.install");
+        guest.script(
+            tools,
+            "clearing an incomplete staged bundle",
+            "rm -rf \"$1\"",
+            &[&stage],
+        )?;
+        guest.copy_in(tools, &bundle.dir, None, &stage)?;
+        guest.write_file(
+            tools,
+            &format!("{stage}/.sealed"),
+            &format!("{}\n", bundle.hash),
+        )?;
+        guest.script(
+            tools,
+            "publishing the legacy bundle",
+            r#"set -eu
+backup="$1.previous"
+test ! -e "$backup" || { echo 'an earlier bundle publication needs inspection' >&2; exit 1; }
+if [ -e "$1" ]; then mv "$1" "$backup"; fi
+if mv "$2" "$1"; then rm -rf "$backup"; else
+  if [ -e "$backup" ]; then mv "$backup" "$1"; fi
+  exit 1
+fi"#,
+            &[BUNDLE, &stage],
+        )?;
+    }
     if let Some(image) = &spec.image {
         let (Some(dir), Some(file)) = (image.parent(), image.file_name().and_then(|f| f.to_str()))
         else {
@@ -162,7 +196,8 @@ pub(crate) fn launch(
     guest.write_file(tools, &format!("{STATE}/secret"), &secret)?;
     let listen = format!("{bind}:{WORKER_PORT}");
     let script = launch_script();
-    let args = [listen.as_str(), BUNDLE, WORKER_LOG];
+    let incarnation = spec.incarnation.as_deref().unwrap_or("");
+    let args = [listen.as_str(), BUNDLE, WORKER_LOG, incarnation];
     guest.script(tools, "starting the worker", &script, &args)?;
     ready(spec, guest, WORKER_PORT, address, &|| None)?;
     Ok(Endpoint { address, secret })

@@ -31,7 +31,7 @@
 //! pack` stays the exact pack-byte population and the section 11 dead-byte
 //! bound/refined fields can be checked against it.
 //!
-//! Only the Normal (WAL/synchronous=NORMAL) profile is built and measured:
+//! Only the Disposable (WAL/synchronous=OFF) profile is built and measured:
 //! owner direction 2026-10-07 disabled Durable execution indefinitely.
 
 use layerfs_content::filesystem::attributes::PortableMetadata;
@@ -243,7 +243,7 @@ pub struct BuildReport {
 pub fn create_store(path: &Path) -> SqliteHandles {
     SqliteHandles::create(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         StoragePolicy::frozen_default(),
         &HistoryCatalogConfig {
             binding_key: BINDING.to_vec(),
@@ -257,7 +257,7 @@ pub fn create_store(path: &Path) -> SqliteHandles {
 pub fn reopen(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         CURSOR_KEY,
     )
@@ -599,7 +599,6 @@ fn commit_and_publish(
             second_parent: None,
             meta,
             force: false,
-            required_head: None,
         })
         .expect("commit")
     {

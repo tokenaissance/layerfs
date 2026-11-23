@@ -19,7 +19,7 @@ fn authority() -> HistoryCatalogConfig {
 }
 fn create(path: &std::path::Path) -> SqliteHandles {
     SqliteHandles::create(
-        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal),
+        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         StoragePolicy::frozen_default(),
         &authority(),
     )

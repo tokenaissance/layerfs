@@ -4,6 +4,7 @@
 //! last, as the untyped records did.
 use layerfs_bridge::control::SdkValue;
 use layerfs_home::json::{parse, print};
+use layerfs_home::op::Op;
 use layerfs_sandbox::host::Started;
 use layerfs_sandbox::record::{DaemonRecord, SandboxRecord, WorkspaceRecord};
 
@@ -37,32 +38,15 @@ fn typed_fields_read_as_the_untyped_record_read_them() {
     let daemon = record.daemon().unwrap();
     assert_eq!(daemon.name(), Some("lfs-x-b"));
     assert!(daemon.retired());
-    // a Sandbox of the retired docker backend names the container its
-    // record keeps, and none when it keeps none: no name is computed
-    assert_eq!(record.retired_container(), None);
-    let retired = |daemon: &str| {
-        let text = format!(r#"{{"name":"b","backend":"docker","daemon":{daemon}}}"#);
-        SandboxRecord::from_record("b", value(&text)).retired_container()
-    };
     assert_eq!(
-        retired(r#"{"name":"lfs-x-b"}"#),
-        Some(Some("lfs-x-b".to_owned()))
+        daemon.labels().unwrap(),
+        vec![("k".to_owned(), "v".to_owned())]
     );
-    assert_eq!(retired("{}"), Some(None));
-    // labels of another shape than `[{ key, value }]` are refused
-    let refusal = daemon.labels().unwrap_err();
-    assert_eq!(refusal.code, "InvalidInput");
-    assert_eq!(refusal.message, "local Sandbox record labels");
-    // an item without its key is refused
+    // an item without its key is refused as before
     let broken = DaemonRecord::from_record(&value(r#"{"labels":[{"value":"v"}]}"#));
     let refusal = broken.labels().unwrap_err();
     assert_eq!(refusal.code, "InvalidInput");
-    // `[{ key, value }]` reads as it is
-    let good = DaemonRecord::from_record(&value(r#"{"labels":[{"key":"k","value":"v"}]}"#));
-    assert_eq!(
-        good.labels().unwrap(),
-        vec![("k".to_owned(), "v".to_owned())]
-    );
+    assert_eq!(refusal.message, "missing text argument `key`");
 }
 
 #[test]
@@ -215,4 +199,31 @@ fn unmount_guard_forceable_rejects_crashed_and_already_forced_records() {
         .recv_timeout(Duration::from_secs(5))
         .expect("bounded test timed out");
     worker.join().unwrap();
+}
+
+/// §3.1: a create assigns an ordered generation the durable tombstone names.
+/// It is a record field only: it does not appear in a call result, and a
+/// record from before generations has none.
+#[test]
+fn a_created_sandbox_records_one_generation_that_round_trips() {
+    let op = Op::begin("sandbox.create", "create", SdkValue::Null).expect("intent");
+    let record = SandboxRecord::creating("t1", "shop/api", "native", &op);
+    let generation = record.generation().expect("a generation").to_owned();
+    assert!(!generation.is_empty());
+    assert!(
+        layerfs_history::ordered_token_parts(&generation).is_some(),
+        "a new generation is ordered"
+    );
+    assert!(record.to_record().get("generation").is_some());
+
+    let read = SandboxRecord::from_record("t1", record.to_record().clone());
+    assert_eq!(read.generation(), Some(generation.as_str()));
+
+    // a Sandbox recorded before generations has none, and a write keeps it so
+    let old = SandboxRecord::from_record("t1", value(r#"{"name":"t1","machine":"native"}"#));
+    assert_eq!(old.generation(), None);
+    assert_eq!(
+        print(&old.to_record()),
+        r#"{"name":"t1","machine":"native"}"#
+    );
 }

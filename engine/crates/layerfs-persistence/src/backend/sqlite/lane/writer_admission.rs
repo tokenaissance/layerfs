@@ -110,28 +110,18 @@ impl Writer {
 }
 
 impl crate::backend::sqlite::session::connection::State {
-    /// Releases the writer this State holds for one job. A quarantined
-    /// State first closes its connection under that writer, so SQLite
-    /// teardown (the rollback of any transaction the uncertain attempt left
-    /// open, and a last close's checkpoint) still precedes advisory release,
-    /// and the lane is not kept until the Session drops (finding #2).
-    pub(crate) fn finish_writer(
-        &mut self,
-        background: Option<&crate::backend::sqlite::session::background::Checkpointer>,
-    ) -> Result<(), BackendError> {
-        let Some(writer) = self.writer_hold.take() else {
-            return Ok(());
-        };
-        if self.quarantined && !self.close_quarantined(background) {
-            // SQLite may still hold a write transaction: the writer stays
-            // with the connection, declared before it in State.
-            self.writer_hold = Some(writer);
+    pub(crate) fn finish_writer(&mut self) -> Result<(), BackendError> {
+        if self.quarantined {
+            // Connection is declared before this retained owner in State, so
+            // SQLite teardown precedes advisory release at last-session drop.
             return Ok(());
         }
-        if let Err(retained) = writer.release() {
-            self.quarantined = true;
-            self.writer_hold = Some(retained);
-            return Err(BackendError::Unknown);
+        if let Some(writer) = self.writer_hold.take() {
+            if let Err(retained) = writer.release() {
+                self.quarantined = true;
+                self.writer_hold = Some(retained);
+                return Err(BackendError::Unknown);
+            }
         }
         Ok(())
     }

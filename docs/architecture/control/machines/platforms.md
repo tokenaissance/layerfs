@@ -28,7 +28,7 @@ naming `tools/machine_image.py`), else the provider's stock image
 `prepared_os_image`). `os_image: "stock"` takes the stock image even when a
 prepared one exists and records none
 ([`create.rs`](../../../../control/crates/layerfs-machine/src/create.rs) `STOCK`).
-`home.get --with platforms` gives each size option its `default` (`DEFAULT_CPUS`,
+`machine.platforms` gives each size option its `default` (`DEFAULT_CPUS`,
 `DEFAULT_MEMORY`, `DEFAULT_DISK` in `layerfs-machine` `spec.rs`).
 
 ## Tools and the docker socket
@@ -38,8 +38,8 @@ prepared one exists and records none
 | Tool lookup | `Tools.path` is this process's `PATH`, then the fallback folders not already on it: on macOS `/opt/homebrew/bin`, `/usr/local/bin`, `/Applications/Docker.app/Contents/Resources/bin` (an app started from the Dock has a short `PATH`), none elsewhere; `LAYERFS_TOOL_FALLBACKS` (a `PATH`-style list, empty for none) replaces them, which tests use. Every provider command runs with `Tools.path` as its `PATH`. The Sandbox code's own Docker reads find `docker` the same way (`find_tool`) | [`spec.rs`](../../../../control/crates/layerfs-platform/src/spec.rs) `Tools::from_env`, `tool_fallbacks`; [`setup/tool.rs`](../../../../control/crates/layerfs-platform/src/setup/tool.rs) `command`, `find_tool` |
 | Socket candidates | read from files and variables only: `DOCKER_HOST`, the current context (`DOCKER_CONTEXT`, else `currentContext` in `config.json` under `DOCKER_CONFIG` or `~/.docker`) and the other contexts' `contexts/meta/*/meta.json`, Docker Desktop's `~/.docker/run/docker.sock`, colima's `~/.colima/default/docker.sock` and OrbStack's `~/.orbstack/run/docker.sock` when they exist, and `/var/run/docker.sock`; deduplicated by path; a non-`unix://` endpoint is listed `usable: false`, never followed | [`docker_socket.rs`](../../../../control/crates/layerfs-platform/src/docker_socket.rs) `docker_candidates` |
 | Automatic choice | `DOCKER_HOST` when `unix://`, else the current context's endpoint when `unix://`, else the first of Docker Desktop's, colima's and OrbStack's sockets that exists, else `/var/run/docker.sock` | same, `docker_automatic` |
-| The docker machine's socket | its record's `docker` (`machine update docker --docker`, or written by its first start: under the home lock once the socket answers a ping, before an image is loaded or anything is made in that Engine, and again once the provider started, so it never moves to another Engine, where its data volume and loaded image are not; a start whose Engine does not answer pins nothing); else the automatic choice (`env:DOCKER_HOST`, `context:<name>`, `desktop`, `colima`, `orbstack` or `default`); no older record is given a fixed socket. `--docker ""` writes `docker: null`: automatic again until the next start records one. Changing it is refused `InUse` while the machine's worker is recorded running. The machine's adapter and the Sandbox code's Docker reads (`machine.images`, image copies) use this one choice | [`spec.rs`](../../../../control/crates/layerfs-machine/src/spec.rs) `docker_socket`, [`endpoint.rs`](../../../../control/crates/layerfs-machine/src/endpoint.rs) `record_socket`, [`docker.rs`](../../../../control/crates/layerfs-sandbox/src/docker.rs) `Docker::of` |
-| Socket state | one connect (non-blocking on Linux, where a full backlog would hold a blocking one) and `GET /_ping` (2 s per read and write): `answering`, `absent` (no such file), `denied` (`EACCES`) or `silent`. The docker probe runs `docker version` only for an answering socket; `home.get --with platforms` pings again for `socket.state` only when the probe found no version. The automatic choice is named as the candidates name its socket | `docker_socket.rs` `socket_state`, [`docker/adapter.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/adapter.rs) |
+| The docker machine's socket | its record's `docker` (`machine update docker --docker`, or written by its first start: under the home lock once the socket answers a ping, before an image is loaded or anything is made in that Engine, and again once the provider started, so it never moves to another Engine, where its data volume and loaded image are not; a start whose Engine does not answer pins nothing); for a record that ran before sockets were recorded (it has `lasting` or a `running`/`failed` state, or no `vm_name`, so an older build used it) and has no `docker` field, `/var/run/docker.sock` (source `legacy`), which its next start records; else the automatic choice. `--docker ""` writes `docker: null`: automatic again until the next start records one. Changing it is refused `InUse` while the machine's worker is recorded running. The machine's adapter and the Sandbox code's Docker reads (`machine.images`, image copies) use this one choice | [`spec.rs`](../../../../control/crates/layerfs-machine/src/spec.rs) `docker_socket`, [`endpoint.rs`](../../../../control/crates/layerfs-machine/src/endpoint.rs) `record_socket`, [`docker.rs`](../../../../control/crates/layerfs-sandbox/src/docker.rs) `Docker::of` |
+| Socket state | one connect (non-blocking on Linux, where a full backlog would hold a blocking one) and `GET /_ping` (2 s per read and write): `answering`, `absent` (no such file), `denied` (`EACCES`) or `silent`. The docker probe runs `docker version` only for an answering socket; `machine.platforms` pings again for `socket.state` only when the probe found no version. The automatic choice is named as the candidates name its socket | `docker_socket.rs` `socket_state`, [`docker/adapter.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/adapter.rs) |
 
 ## native (`platforms/native/`)
 
@@ -51,7 +51,7 @@ Linux, Store calls run in the caller's process and there is no worker.
 | `create`, `remove` | `InvalidInput`: "is built in and never created" / "… never removed" |
 | `start` | `None` on macOS and Linux; on Windows `Unsupported` (its Stores would run in a WSL2 worker, which is not designed) |
 | `stop` | nothing to stop |
-| `status` | `running`; `Unsupported` with `missing` (`host:root`, `host:/dev/fuse`, `host:cgroup2`, `host:macos-or-linux`) when the host lacks what its Sandboxes need, as `provider_within` answers, so it never reads `ready` |
+| `status` | `running`; `down_reason` "missing: …" when the host lacks something |
 | `guest`, `copy_in`, `copy_out` | `InvalidInput`: "runs in-process; its files are the host's" |
 | `reach` | the URL as given (`Loopback::Shared`) |
 | `forward` | `127.0.0.1:<guest port>`, no pid |
@@ -96,10 +96,8 @@ volume, not to `docker logs`
 | Call | Answer |
 | --- | --- |
 | `create`, `remove` | `InvalidInput` (built in) |
-| `stop` | `docker stop -t 5 <vm>` (forced: `-t 0`) while it runs, restarts or is paused; the volume stays |
+| `stop` | `docker stop -t 5 <vm>` if it exists; the volume stays |
 | `status` | `stopped` when the Engine does not answer; else `inspect` state (`running`; `dead` is failed; else stopped), through `with_worker` |
-| `provider_within` | `inspect` state alone: `running`; `created`, `exited` stopped; `dead` failed; paused, restarting, removing or unknown `Unavailable` |
-| a container named `<vm>` without the `layerfs.role=machine-worker` label | `Exists` from `start`, `stop` and `provider_within` alike ("… is not a LayerFS worker; it is left alone"); it is never touched |
 | `guest` | `docker -H unix://<socket> exec` in the worker container |
 | `load_image` | `docker load -i` (up to 300 s), `sha256:<64 hex>` |
 | `reach` | Linux host: as given (host network); Docker Desktop: a loopback host becomes the address the worker resolves `host.docker.internal` to (`getent ahostsv4`) |
@@ -144,10 +142,10 @@ named volume.
 
 | Call | Answer |
 | --- | --- |
-| `start` | needs the recorded port (else `InvalidInput`) and the container (else `NotFound`); `container start` if stopped, and once if failed (the CLI's answer decides; `failed`'s fix is `machine start`); `bring_up`; records the network gateway |
-| `stop` | `container stop` (5 s grace) if running; forced: `container stop --time 0`, also when failed or between states |
+| `start` | needs the recorded port (else `InvalidInput`) and the container (else `NotFound`); `container start` if stopped or failed; `bring_up`; records the network gateway |
+| `stop` | `container stop` if running |
 | `remove` | `container delete --force`, then `container volume delete` |
-| `status` | `container inspect` `status.state`: `running`, `stopped`, `failed`; any other (`stopping`, `unknown`) is `Unavailable`, as lima's and docker's passing states, never recorded `failed` |
+| `status` | `container inspect` `status.state` `running`/`stopped`, else failed |
 | `reach` | a loopback host becomes the recorded gateway, else `status.networks[0].ipv4Gateway` read while it runs |
 | `forward` | `Unsupported`: the CLI publishes a port only at create |
 
@@ -165,7 +163,7 @@ One Lima instance (`vmType: vz`, macOS), made from a template written to
  create(spec, bundle)                                   lima/create.rs
    limactl list <vm> / disk list --json lfs<8 hex>: present -> Exists
    limactl disk create lfs<8 hex> --size <disk>MiB --format raw
-   limactl create --name <vm> --tty=false -  < template   (up to 120 s)
+   limactl create --name <vm> --tty=false -  < template
    limactl start --tty=false <vm>
    /mnt/lima-lfs<8 hex> must be ext4; bind it at /layerfs/data
    bring_up over ssh -F <dir>/ssh.config lima-<vm> sudo -n
@@ -181,9 +179,8 @@ One Lima instance (`vmType: vz`, macOS), made from a template written to
 
 | Call | Answer |
 | --- | --- |
-| `start` | needs the recorded port (else `InvalidInput`) and the instance (else `NotFound`); `Failed` if `Broken`, before any call: Lima says `Broken` when it cannot read the instance's own files, and `limactl start` refuses such an instance itself ("errors inspecting instance"), so unlike apple-container's `failed` it is not tried; boots if stopped; attach; `bring_up` |
-| `stop` | `limactl stop` (up to 300 s) if running; forced: `limactl stop --force`, also when `Broken`; instance and disk stay |
-| `status` | `limactl list` `Running`, `Stopped`, `Broken` (failed); any other is `Unavailable` |
+| `start` | needs the recorded port (else `InvalidInput`) and the instance (else `NotFound`); `Failed` if `Broken`; boots if stopped; attach; `bring_up` |
+| `stop` | `limactl stop` (up to 300 s); instance and disk stay |
 | `remove` | `limactl delete --force`, then `limactl disk delete` |
 | `reach` | a loopback host becomes `192.168.5.2` (the address of `host.lima.internal`; the Sandbox root has no such hosts entry) |
 | `forward` | a detached `ssh -N -L` over Lima's `ssh.config`, answering its pid ([Workers and reach](workers-and-reach.md#forwards)) |
@@ -196,21 +193,17 @@ One Lima instance (`vmType: vz`, macOS), made from a template written to
 | --- | --- | --- |
 | `missing: host:root`, `host:/dev/fuse`, `host:cgroup2` | `native` on Linux without root, FUSE or cgroup v2 | [`probe.rs`](../../../../control/crates/layerfs-platform/src/probe.rs) `native_missing` |
 | `missing: host:macos-or-linux` | `native` on Windows or another host | same |
-| `Unsupported` from a `native` machine's `status`, with `missing` | the host lacks what its Sandboxes need (same facts as above) | [`native/observe.rs`](../../../../control/crates/layerfs-platform/src/platforms/native/observe.rs) |
 | `missing: tool:docker`, `host:<socket>`, `host:wsl2` | no `docker` CLI on `PATH` or in the fallback folders; the socket does not answer a ping (its `state` says why); a Windows host | [`docker/adapter.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/adapter.rs) |
 | `missing: bundle:<dir>` | a platform that runs a worker, and this build's sealed Linux bundle is absent there or of another worker protocol | [`platforms.rs`](../../../../control/crates/layerfs-machine/src/platforms.rs) |
-| docker `start`, `stop` or provider check `Exists`: "… is not a LayerFS worker; it is left alone" | a container of that name without the worker label | [`docker/unix.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/unix.rs) `not_ours` |
+| docker `start` `Exists`: "… is not a LayerFS worker; it is left alone" | a container of that name without the worker label | [`docker/power.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/power.rs) |
 | docker `start` `Failed` | image not in the Engine (`--pull never`), or no published port (macOS) | same |
 | `missing: host:macos`, `host:apple-silicon`, `tool:container` | not a Mac, not `aarch64`, no `container` CLI | [`apple_container/adapter.rs`](../../../../control/crates/layerfs-platform/src/platforms/apple_container/adapter.rs) |
 | apple-container `Failed`: "… inspect answer is not the shape this adapter knows" | another CLI version's JSON | [`apple_container/observe.rs`](../../../../control/crates/layerfs-platform/src/platforms/apple_container/observe.rs) |
 | apple-container `reach` `Unavailable`: no gateway | the machine is stopped | same |
-| apple-container `Unavailable`: "… a transitional or unrecognized state" | the container is `stopping` (or `unknown`); ask again once it settles, or force the stop | same; [`apple_container/power.rs`](../../../../control/crates/layerfs-platform/src/platforms/apple_container/power.rs) |
 | `missing: host:macos`, `tool:limactl` | not a Mac, no `limactl` | [`lima/observe.rs`](../../../../control/crates/layerfs-platform/src/platforms/lima/observe.rs) |
 | lima "… is not an ext4 mount" | the data disk did not attach as ext4 | [`lima/power.rs`](../../../../control/crates/layerfs-platform/src/platforms/lima/power.rs) |
-| lima `start` `Failed`: "… is broken: Lima cannot read its files" | Lima reports the instance `Broken`; `limactl list <vm>` says why; a start cannot repair it | same |
 | `Exists`: a disk or volume "already exists; it is left alone" | left by an earlier machine of that name | `create.rs` of the platform |
 | `Unsupported`: "the guest of … still allows user namespaces" | the guest refused the sysctl | [`setup/worker.rs`](../../../../control/crates/layerfs-platform/src/setup/worker.rs) |
-| `Unknown`: "… did not end within N s and was stopped", or "… ended, but its output was still held open when its time ran out" | a provider command passed its bound (30 s call, 120 s create, 300 s boot), or left a process holding its output past it; its whole process group was killed, the outcome is not known and nothing is retried | [`setup/tool.rs`](../../../../control/crates/layerfs-platform/src/setup/tool.rs) `run` |
 
 ## Support table (`support.rs`)
 
@@ -236,7 +229,7 @@ Windows column is table data, not a built host (`#![cfg(unix)]`).
 | Refusal text (word for word) | For |
 | --- | --- |
 | `LayerFS names no host other than macOS, Linux and Windows` | any platform on another host |
-| `no Sandbox backend on Windows` | `native` on Windows |
+| `no Sandbox backend on Windows (O5)` | `native` on Windows |
 | `docker through WSL2 is not designed yet` | `docker` on Windows |
 | `apple-container runs on macOS hosts only`, `lima runs on macOS hosts only` | those off macOS |
 
@@ -252,7 +245,7 @@ worker log exists), false on every `native`.
 
 Generated by `support_json()`; never edited by hand. One block per host
 (`macos`, `linux`, `windows`), one row per platform: the rows
-`home.get --with platforms` answers without its live `ready`, `missing`, `version`.
+`machine.platforms` answers without its live `ready`, `missing`, `version`.
 
 | Key | Value |
 | --- | --- |
@@ -276,11 +269,11 @@ profile or row, and no setting brings one back. The refusal is
 | Call on a removed platform's record | Behaviour |
 | --- | --- |
 | `machine list`, `get` | shown, never probed: `backend: "-"`, `supports` false with the reason, `state: "unsupported"` |
-| `machine remove` | removes the record only (same `InUse` check), answering `{ok: true}`; the long form's `message` says "only its record was removed (<reason>); nothing on its host was touched" |
+| `machine remove` | forgets the record only (same `InUse` check); its note names what is left on its host (the `msb` VM and volume, or the microVM folder and disk on its Lima host) |
 | every other call, `machine create <name> firecracker\|microsandbox\|ssh` | `Unsupported`, before any effect |
 
 A Lima machine that an old Firecracker record names as its host is refused
-`machine remove` (`InUse`) until that record is removed
+`machine remove` (`InUse`) until that record is forgotten
 ([`record.rs`](../../../../control/crates/layerfs-machine/src/record.rs),
 [`remove.rs`](../../../../control/crates/layerfs-machine/src/remove.rs)).
 

@@ -58,27 +58,6 @@ fn ok(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> SdkValue {
     call(home, name, args).unwrap_or_else(|e| panic!("{name}: {e:?}"))
 }
 
-/// PostgreSQL Store `pg` as a 2.0 home records it: its address and the
-/// saved login it names (a test login; nothing is dialled with it here).
-fn pg_record(home: &Path) {
-    let login = [
-        ("auth", t("pg")),
-        ("user", t("u")),
-        ("password", t("not-a-real-password")),
-    ];
-    ok(home, "store.save_auth", &login);
-    home::write_record(
-        &paths::store_record(home, "pg"),
-        &SdkValue::map([
-            ("name", t("pg")),
-            ("kind", t("postgresql")),
-            ("url", t("postgres://127.0.0.1:1/db")),
-            ("auth", t("pg")),
-        ]),
-    )
-    .unwrap();
-}
-
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
@@ -100,7 +79,7 @@ fn work(home: &Path, project: &str, sandbox: &str, branch: &str, file: &str) {
         &[
             ("project", t(project)),
             ("name", t(branch)),
-            ("from", t("main")),
+            ("from_branch", t("main")),
         ],
     );
     let mounted = ok(
@@ -108,12 +87,12 @@ fn work(home: &Path, project: &str, sandbox: &str, branch: &str, file: &str) {
         "workspace.mount",
         &[("sandbox", t(sandbox)), ("branch", t(branch))],
     );
-    let ws = mounted.get_text("workspace").unwrap().to_owned();
+    let ws = mounted.get_text("ws").unwrap().to_owned();
     let ran = ok(
         home,
         "workspace.exec",
         &[
-            ("workspace", t(&ws)),
+            ("ws", t(&ws)),
             (
                 "command",
                 t(&format!("cat readme.txt && echo {file} > {file}")),
@@ -124,12 +103,14 @@ fn work(home: &Path, project: &str, sandbox: &str, branch: &str, file: &str) {
     let committed = ok(
         home,
         "workspace.commit",
-        &[("workspace", t(&ws)), ("message", t(file))],
+        &[("ws", t(&ws)), ("message", t(file))],
     );
-    // a new Commit: its id, and no `unchanged`
-    assert!(committed.get_text("commit").is_some(), "{committed:?}");
-    assert!(committed.get("unchanged").is_none(), "{committed:?}");
-    ok(home, "workspace.unmount", &[("workspace", t(&ws))]);
+    assert_eq!(
+        committed.get_text("kind"),
+        Some("Committed"),
+        "{committed:?}"
+    );
+    ok(home, "workspace.unmount", &[("ws", t(&ws))]);
     let read = ok(
         home,
         "file.read",
@@ -149,7 +130,15 @@ fn a_sandbox_runs_where_its_store_can_be_reached() {
     ok(&home, "machine.list", &[]);
     // a PostgreSQL Store and a sqlite Store on native, written as records:
     // the refusals come before any connection
-    pg_record(&home);
+    home::write_record(
+        &paths::store_record(&home, "pg"),
+        &SdkValue::map([
+            ("name", t("pg")),
+            ("kind", t("postgresql")),
+            ("url", t("postgres://u@127.0.0.1:1/db")),
+        ]),
+    )
+    .unwrap();
     home::write_record(
         &paths::store_record(&home, "shop"),
         &SdkValue::map([("name", t("shop")), ("kind", t("sqlite"))]),
@@ -164,11 +153,7 @@ fn a_sandbox_runs_where_its_store_can_be_reached() {
     }
     home::write_record(
         &paths::machine_record(&home, "dev"),
-        &SdkValue::map([
-            ("name", t("dev")),
-            ("platform", t("lima")),
-            ("vm_name", t("layerfs-test-dev")),
-        ]),
+        &SdkValue::map([("name", t("dev")), ("platform", t("lima"))]),
     )
     .unwrap();
     home::write_record(
@@ -247,7 +232,15 @@ fn every_platform_refusal_is_the_support_table_s() {
     let home = tempdir("support");
     home::open(&home).unwrap();
     ok(&home, "machine.list", &[]);
-    pg_record(&home);
+    home::write_record(
+        &paths::store_record(&home, "pg"),
+        &SdkValue::map([
+            ("name", t("pg")),
+            ("kind", t("postgresql")),
+            ("url", t("postgres://u@127.0.0.1:1/db")),
+        ]),
+    )
+    .unwrap();
     home::write_record(
         &paths::project_record(&home, "pg", "app"),
         &SdkValue::map([("name", t("app"))]),
@@ -323,36 +316,14 @@ fn a_postgresql_store_s_sandboxes_on_native_and_docker() {
     let home = tempdir("pg");
     let folder = source("pg-src");
     let id = home::open(&home).unwrap().id;
-    // the native machine's daemon is a setting of its record
-    layerfs_api::call(
-        Some(&home),
-        "machine.update",
-        SdkValue::map([
-            ("machine", SdkValue::text("native")),
-            ("daemon", SdkValue::text(daemon.as_str())),
-        ]),
-        &mut |_| {},
-    )
-    .unwrap();
-    let (scheme, rest) = url.split_once("://").unwrap();
-    let (user, address) = rest.split_once('@').unwrap();
-    let password = std::env::var("LAYERFS_TEST_PG_PASSWORD").unwrap();
-    ok(
-        &home,
-        "store.save_auth",
-        &[
-            ("auth", t("pg")),
-            ("user", t(user)),
-            ("password", t(&password)),
-        ],
-    );
+    home::import_env(&home, &[("LAYERFS_DAEMON".to_owned(), daemon)]).unwrap();
     ok(
         &home,
         "store.connect",
         &[
-            ("store", t("pg")),
-            ("url", t(&format!("{scheme}://{address}"))),
-            ("auth", t("pg")),
+            ("name", t("pg")),
+            ("url", t(&url)),
+            ("password", t("env:LAYERFS_TEST_PG_PASSWORD")),
         ],
     );
     ok(
@@ -372,20 +343,8 @@ fn a_postgresql_store_s_sandboxes_on_native_and_docker() {
             ("machine", t("native")),
         ],
     );
-    // the create proved this computer reaches the Store: `native` with no
-    // address of its own is this computer's row (spec v23 V23-2)
-    let got = ok(
-        &home,
-        "store.get",
-        &[("store", t("pg")), ("detail", SdkValue::Bool(true))],
-    );
-    let Some(SdkValue::List(rows)) = got.get("connections") else {
-        panic!("{got:?}");
-    };
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0].get_text("reached"), Some("ok"), "{rows:?}");
     work(&home, "pg/app", "n", "on-native", "native.txt");
-    ok(&home, "sandbox.remove", &[("sandbox", t("n"))]);
+    ok(&home, "sandbox.close", &[("name", t("n"))]);
     if let (Some(image), Some(_)) = (env("LAYERFS_TEST_IMAGE"), env("LAYERFS_BUNDLE")) {
         ok(
             &home,
@@ -407,7 +366,7 @@ fn a_postgresql_store_s_sandboxes_on_native_and_docker() {
                 ],
             );
             work(&home, "pg/app", "d", "on-docker", "docker.txt");
-            ok(&home, "sandbox.remove", &[("sandbox", t("d"))]);
+            ok(&home, "sandbox.close", &[("name", t("d"))]);
         });
         remove_worker(&id);
         if let Err(panic) = outcome {
@@ -416,12 +375,9 @@ fn a_postgresql_store_s_sandboxes_on_native_and_docker() {
     } else {
         eprintln!("NOT_RUN (docker half): LAYERFS_TEST_IMAGE / LAYERFS_BUNDLE unset");
     }
-    // the password is in the home's secret folder only
+    // the password is resolved per call and never written
     let password = std::env::var("LAYERFS_TEST_PG_PASSWORD").unwrap();
-    for entry in walk(&home)
-        .into_iter()
-        .filter(|e| !e.starts_with(home.join("secret")))
-    {
+    for entry in walk(&home) {
         let bytes = std::fs::read(&entry).unwrap_or_default();
         assert!(
             !bytes
@@ -489,8 +445,8 @@ fn a_sqlite_store_s_sandbox_on_the_docker_machine() {
         ok(&home, "machine.start", &[("name", t("docker"))]);
         let moved = ok(
             &home,
-            "store.move",
-            &[("store", t("shop")), ("machine", t("docker"))],
+            "store.push",
+            &[("name", t("shop")), ("machine", t("docker"))],
         );
         assert_eq!(moved.get_text("to"), Some("docker"), "{moved:?}");
         let created = ok(
@@ -516,7 +472,7 @@ fn a_sqlite_store_s_sandbox_on_the_docker_machine() {
         );
         assert_eq!(created.get_text("platform"), Some("docker"), "{created:?}");
         work(&home, "shop/app", "t", "on-docker", "docker.txt");
-        ok(&home, "sandbox.remove", &[("sandbox", t("t"))]);
+        ok(&home, "sandbox.close", &[("name", t("t"))]);
     });
     remove_worker(&id);
     let _ = std::fs::remove_dir_all(&home);
@@ -549,8 +505,8 @@ fn a_sqlite_store_s_sandbox_on_each_running_vm_machine() {
         ok(&home, "store.create", &[("name", t(&store))]);
         let moved = ok(
             &home,
-            "store.move",
-            &[("store", t(&store)), ("machine", t(machine))],
+            "store.push",
+            &[("name", t(&store)), ("machine", t(machine))],
         );
         assert_eq!(moved.get_text("to"), Some(machine), "{moved:?}");
         // Init through the machine's worker, where the Store now is
@@ -560,7 +516,6 @@ fn a_sqlite_store_s_sandbox_on_each_running_vm_machine() {
             &[
                 ("project", t(&project)),
                 ("folder", t(&folder.display().to_string())),
-                ("detail", SdkValue::Bool(true)),
             ],
         );
         assert_eq!(made.get_text("machine"), Some(machine), "{made:?}");
@@ -580,8 +535,8 @@ fn a_sqlite_store_s_sandbox_on_each_running_vm_machine() {
         );
         assert_eq!(created.get_text("machine"), Some(machine), "{created:?}");
         work(&home, &project, &store, "on-vm", "vm.txt");
-        ok(&home, "sandbox.remove", &[("sandbox", t(&store))]);
-        ok(&home, "store.remove", &[("store", t(&store))]);
+        ok(&home, "sandbox.close", &[("name", t(&store))]);
+        ok(&home, "store.remove", &[("name", t(&store))]);
         std::fs::remove_dir_all(&folder).unwrap();
         eprintln!("RAN on {machine}: {created:?}");
     }
@@ -599,11 +554,7 @@ fn a_sandbox_with_no_machine_runs_on_its_store_s() {
         &paths::machine_record(&home, "box"),
         // docker runs on macOS and Linux hosts, so the support table passes
         // this machine on either
-        &SdkValue::map([
-            ("name", t("box")),
-            ("platform", t("docker")),
-            ("vm_name", t("layerfs-00000000-box")),
-        ]),
+        &SdkValue::map([("name", t("box")), ("platform", t("docker"))]),
     )
     .unwrap();
     home::write_record(
@@ -633,7 +584,15 @@ fn a_sandbox_with_no_machine_runs_on_its_store_s() {
         "a refused create leaves no claim"
     );
 
-    pg_record(&home);
+    home::write_record(
+        &paths::store_record(&home, "pg"),
+        &SdkValue::map([
+            ("name", t("pg")),
+            ("kind", t("postgresql")),
+            ("url", t("postgres://u@127.0.0.1:1/db")),
+        ]),
+    )
+    .unwrap();
     home::write_record(
         &paths::project_record(&home, "pg", "app"),
         &SdkValue::map([("name", t("app"))]),

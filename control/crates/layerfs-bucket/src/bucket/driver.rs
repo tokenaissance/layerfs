@@ -135,8 +135,7 @@ pub fn open_span(path: &Path, span: Option<Span>) -> Result<(File, Span), Remote
         .is_none_or(|end| end > bytes)
     {
         return Err(RemoteError::Invalid(format!(
-            "the range of {} bytes at byte {} lies beyond a {bytes}-byte file",
-            span.length, span.offset
+            "span {span:?} beyond a {bytes}-byte file"
         )));
     }
     Ok((file, span))

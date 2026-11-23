@@ -8,8 +8,7 @@
 //! Workspace calls take that route in `sandbox/direct.rs`.
 use crate::record::StoreRef;
 use layerfs_bridge::control::{SdkRefusal, SdkValue};
-use layerfs_home::outcome::shell_word;
-use layerfs_home::outcome::{refused, with_fix, with_next, Outcome, FIX};
+use layerfs_home::outcome::{refused, Outcome};
 use layerfs_machine::worker::{self, Budget, Endpoint, EventSink, Unreached};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -42,52 +41,8 @@ pub struct Worker {
 pub fn plan(home: &Path, store: &StoreRef) -> Result<Executor> {
     match store {
         StoreRef::Postgres { .. } => Ok(Executor::Local),
-        StoreRef::Sqlite { name, machine } => {
-            on_machine(home, machine).map_err(|refusal| blocked(name, machine, refusal))
-        }
+        StoreRef::Sqlite { .. } => on_machine(home, store.machine()?),
     }
-}
-
-/// A Store call's refusal for its machine whose record has no `vm_name`
-/// (LF10) or whose VM a live read found gone (area 10): the Store reads
-/// `blocked` by that machine, `outdated` or `missing` (`store list`), so
-/// the call is `Unavailable`, as for the machine's other not-ready states,
-/// with that `blocked_by` beside it and the machine's own fix, which the
-/// call boundary widens to the chain of what is on it (UI2-8). Any other
-/// refusal is kept.
-pub(crate) fn blocked(store: &str, machine: &str, refusal: SdkRefusal) -> SdkRefusal {
-    use layerfs_home::state::{BlockedBy, Reason};
-    use layerfs_machine::record::{no_vm_name_fix, Holders};
-    let bare = no_vm_name_fix(machine, Holders::default());
-    if refusal.code != "Failed" || refusal.detail.get_text(FIX) != Some(bare.as_str()) {
-        return refusal;
-    }
-    // `vm_present`'s refusal says the VM is gone; `provider_name`'s that
-    // the record has no `vm_name`
-    let reason = match refusal.message.contains("'s VM is gone") {
-        true => Reason::Missing,
-        false => Reason::Outdated,
-    };
-    let by = BlockedBy {
-        thing: "machine",
-        handle: machine.to_owned(),
-        reason: reason.word(),
-    };
-    let message = format!(
-        "Store {store} is blocked by machine {machine} ({}): {}",
-        reason.word(),
-        refusal.message
-    );
-    let code = "Unavailable".to_owned();
-    with_next(
-        SdkRefusal {
-            code,
-            message,
-            ..refusal
-        },
-        "blocked_by",
-        by.to_sdk(),
-    )
 }
 
 /// Where a call on machine `machine` runs: its Sandboxes' host operations,
@@ -117,18 +72,6 @@ pub fn on_machine_read(home: &Path, machine: &str) -> Result<Executor> {
     if layerfs_machine::runs_here(home, machine)? {
         return Ok(Executor::Local);
     }
-    // a machine whose record has no `vm_name` has no worker this build
-    // reaches: refused `Failed` before anything is dialled (V20-8), with
-    // its remove as the fix, which the call boundary widens to the chain
-    // of what is on it (UI2-8; RC-B F3); a Store call answers it
-    // `Unavailable` with the Store's `blocked_by` ([`plan`], LF10)
-    if let Some(record) = layerfs_machine::record::MachineRecord::read(home, machine)? {
-        if record.nameless() {
-            record.provider_name()?;
-        }
-        // a VM a live read found gone: likewise, nothing is dialled (area 10)
-        record.vm_present()?;
-    }
     Ok(Executor::Worker(Worker {
         home: home.to_owned(),
         machine: machine.to_owned(),
@@ -138,7 +81,7 @@ pub fn on_machine_read(home: &Path, machine: &str) -> Result<Executor> {
 
 impl Worker {
     /// The worker an operation of several steps uses (`store.remove`,
-    /// `store.move`), read before it marks anything: a machine with no
+    /// `store.push`, `store.pull`), read before it marks anything: a machine with no
     /// recorded worker is refused now, naming `layerfs machine start`.
     pub fn ready(&mut self) -> Result<()> {
         if self.endpoint.is_none() {
@@ -256,24 +199,13 @@ fn stopped(machine: &str, why: SdkRefusal) -> SdkRefusal {
             why.message,
             worker::replace_with(machine)
         );
-        let fix = format!(
-            "layerfs machine stop {machine} && layerfs machine start {machine}",
-            machine = shell_word(machine)
-        );
-        return with_fix(SdkRefusal { message, ..why }, fix);
+        return SdkRefusal { message, ..why };
     }
-    let refusal = refused(
+    refused(
         "Unavailable",
         format!(
             "machine {machine}'s worker did not answer ({}); start it with `layerfs machine start {machine}`",
             why.message
-        ),
-    );
-    with_fix(
-        refusal,
-        format!(
-            "layerfs machine start {machine}",
-            machine = shell_word(machine)
         ),
     )
 }
@@ -283,17 +215,10 @@ fn stopped(machine: &str, why: SdkRefusal) -> SdkRefusal {
 /// fails when called.
 fn recorded(home: &Path, machine: &str) -> Result<Endpoint> {
     let Some(worker) = layerfs_home::secrets::worker_secret(home, machine)? else {
-        let refusal = refused(
+        return Err(refused(
             "Unavailable",
             format!(
                 "machine {machine} is not running; start it with `layerfs machine start {machine}`"
-            ),
-        );
-        return Err(with_fix(
-            refusal,
-            format!(
-                "layerfs machine start {machine}",
-                machine = shell_word(machine)
             ),
         ));
     };

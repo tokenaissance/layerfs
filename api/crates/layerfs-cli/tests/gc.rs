@@ -11,13 +11,13 @@ fn run_code(home: &Path, words: &[&str]) -> (Option<i32>, String, String) {
     (out.status.code(), text(&out.stdout), text(&out.stderr))
 }
 
-/// The help line of each call, as the table renders it: hide-path is the
-/// shell spelling of hide_path.
+/// The help line of each call, as the table renders it: remove-file is the
+/// shell spelling of remove_file.
 const CALLS: &[(&[&str], &str, &str)] = &[
     (
         &["branch", "remove"],
         "layerfs branch remove <project> <branch>",
-        "remove one Branch; its name stays taken until compaction",
+        "soft-remove one Branch",
     ),
     (
         &["project", "delete"],
@@ -25,14 +25,19 @@ const CALLS: &[(&[&str], &str, &str)] = &[
         "retire one project",
     ),
     (
-        &["project", "hide-path"],
-        "layerfs project hide-path <project> <path>",
+        &["project", "remove-file"],
+        "layerfs project remove-file <project> <path>",
         "hide one absolute path",
     ),
     (
         &["store", "compact"],
-        "layerfs store compact <store>",
+        "layerfs store compact <name>",
         "reclaim dead bytes",
+    ),
+    (
+        &["store", "repair-mount-holders"],
+        "layerfs store repair-mount-holders <name> <project> <branch> <action>",
+        "list, settle, release or audit mount holders (operator)",
     ),
 ];
 
@@ -60,7 +65,7 @@ fn help_lists_each_gc_call_with_its_usage() {
     };
     assert!(line("branch").contains("remove"), "{}", line("branch"));
     assert!(
-        line("project").contains("delete") && line("project").contains("hide-path"),
+        line("project").contains("delete") && line("project").contains("remove-file"),
         "{}",
         line("project")
     );
@@ -74,9 +79,7 @@ fn help_lists_each_gc_call_with_its_usage() {
         assert_eq!(code, Some(0), "{words:?}: {err}");
         assert!(err.is_empty(), "{words:?}: {err}");
         assert!(out.starts_with(usage), "{words:?}: {out}");
-        // the one-line help, as a sentence
-        let sentence = format!("{}{}", help[..1].to_uppercase(), &help[1..]);
-        assert!(out.contains(&sentence), "{words:?}: {out}");
+        assert!(out.contains(help), "{words:?}: {out}");
         // the same help after the call, through -h and --help
         for flag in ["-h", "--help"] {
             let with_flag: Vec<&str> = words.iter().copied().chain([flag]).collect();
@@ -100,12 +103,24 @@ fn wrong_arity_and_options_are_usage_errors() {
         &["project", "delete"],
         &["project", "delete", "shop/api", "extra"],
         &["project", "delete", "shop/api", "--force"],
-        &["project", "hide-path", "shop/api"],
-        &["project", "hide-path", "shop/api", "/a", "extra"],
-        &["project", "hide-path", "shop/api", "/a", "--force"],
+        &["project", "remove-file", "shop/api"],
+        &["project", "remove-file", "shop/api", "/a", "extra"],
+        &["project", "remove-file", "shop/api", "/a", "--force"],
         &["store", "compact"],
         &["store", "compact", "shop", "extra"],
         &["store", "compact", "shop", "--force"],
+        &["store", "repair-mount-holders"],
+        &["store", "repair-mount-holders", "shop", "app", "main"],
+        &["store", "repair-mount-holders", "shop", "app", "main", "preview", "extra"],
+        &[
+            "store",
+            "repair-mount-holders",
+            "shop",
+            "app",
+            "main",
+            "preview",
+            "--force",
+        ],
     ];
     for words in wrong {
         let (code, out, err) = run_code(&home, words);
@@ -124,8 +139,16 @@ fn well_formed_lines_reach_the_library() {
     let well_formed: &[&[&str]] = &[
         &["branch", "remove", "shop/api", "work"],
         &["project", "delete", "shop/api"],
-        &["project", "hide-path", "shop/api", "/a"],
+        &["project", "remove-file", "shop/api", "/a"],
         &["store", "compact", "shop"],
+        &[
+            "store",
+            "repair-mount-holders",
+            "shop",
+            "app",
+            "main",
+            "preview",
+        ],
     ];
     for words in well_formed {
         let (code, out, err) = run_code(&home, words);
@@ -133,10 +156,7 @@ fn well_formed_lines_reach_the_library() {
         assert_eq!(code, Some(125), "{words:?}: {err}");
         assert!(out.is_empty(), "{words:?}: {out}");
         assert!(err.starts_with("{"), "{words:?}: {err}");
-        assert!(
-            err.contains("\"error\":\"NotFound\"") && err.contains("no Store named shop"),
-            "{words:?}: {err}"
-        );
+        assert!(err.contains("\"code\":\"NoSuchStore\""), "{words:?}: {err}");
     }
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -148,14 +168,14 @@ fn a_bare_project_is_refused_and_the_four_are_out_of_scope() {
     for words in [
         &["branch", "remove", "api", "main"][..],
         &["project", "delete", "api"],
-        &["project", "hide-path", "api", "/a"],
+        &["project", "remove-file", "api", "/a"],
     ] {
         let (code, out, err) = run_code(&home, words);
         assert_eq!(code, Some(125), "{words:?}: {err}");
         assert!(out.is_empty(), "{words:?}: {out}");
         assert!(err.starts_with("{"), "{words:?}: {err}");
         assert!(
-            err.contains("\"error\":\"InvalidInput\""),
+            err.contains("\"code\":\"InvalidInput\""),
             "{words:?}: {err}"
         );
         assert!(err.contains("with its Store"), "{words:?}: {err}");
@@ -167,8 +187,8 @@ fn a_bare_project_is_refused_and_the_four_are_out_of_scope() {
         (&["branch", "remove", "shop/api", "main"], "branch.remove"),
         (&["project", "delete", "shop/api"], "project.delete"),
         (
-            &["project", "hide-path", "shop/api", "/web/a"],
-            "project.hide_path",
+            &["project", "remove-file", "shop/api", "/web/a"],
+            "project.remove_file",
         ),
         (&["store", "compact", "shop"], "store.compact"),
     ];

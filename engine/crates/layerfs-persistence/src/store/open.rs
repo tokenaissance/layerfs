@@ -62,7 +62,7 @@ impl SqliteHandles {
         Self::open(config, binding, cursor_key, false)
     }
     /// Opens for diagnosis without changing journal/checkpoint settings or
-    /// migrating the source. Uses the Normal profile, read-only.
+    /// migrating the source. Uses the explicitly Disposable execution policy.
     pub fn open_diagnostic(
         path: &std::path::Path,
         binding: &[u8],
@@ -75,16 +75,6 @@ impl SqliteHandles {
             binding,
             cursor_key,
         )
-    }
-    /// Whether the sqlite Store at `path` records the identity `binding`,
-    /// read without validating its schema (diagnosis only).
-    pub fn diagnostic_identity(
-        path: &std::path::Path,
-        binding: &[u8],
-    ) -> Result<bool, PersistenceError> {
-        let session = Session::connect_diagnostic(path)?;
-        let catalog_id = CatalogId::derive(binding).map_err(|_| PersistenceError::Malformed)?;
-        Ok(session.identity_matches(catalog_id, binding)?)
     }
     fn open(
         config: PersistenceConfig,
@@ -104,6 +94,8 @@ impl SqliteHandles {
             config.sqlite_pack_layout,
             config.sqlite_acquisition,
         )?);
+        // An existing Store keeps the layout and acquisition schema it was
+        // written with; the creation-only config selection does not name it.
         if writable {
             // A Store at the released 2.0 table set recorded its schema
             // without the position columns; it gains them before any table

@@ -53,17 +53,7 @@ fn exec_stream_passes_output_and_the_commands_exit_code() {
         return;
     };
     home::open(&home).unwrap();
-    // the native machine's daemon is a setting of its record
-    layerfs_api::call(
-        Some(&home),
-        "machine.update",
-        SdkValue::map([
-            ("machine", SdkValue::text("native")),
-            ("daemon", SdkValue::text(daemon.as_str())),
-        ]),
-        &mut |_| {},
-    )
-    .unwrap();
+    home::import_env(&home, &[("LAYERFS_DAEMON".to_owned(), daemon)]).unwrap();
     let folder = tempdir("folder");
     std::fs::write(folder.join("README.md"), "streamed\n").unwrap();
     ok(&home, "store.create", &[("name", t("shop"))]);
@@ -79,7 +69,7 @@ fn exec_stream_passes_output_and_the_commands_exit_code() {
         &[
             ("project", t("shop/api")),
             ("name", t("dev")),
-            ("from", t("main")),
+            ("from_branch", t("main")),
         ],
     );
     ok(
@@ -96,7 +86,7 @@ fn exec_stream_passes_output_and_the_commands_exit_code() {
         "workspace.mount",
         &[("sandbox", t("s1")), ("branch", t("dev"))],
     );
-    let ws = mounted.get_text("workspace").unwrap().to_owned();
+    let ws = mounted.get_text("ws").unwrap().to_owned();
 
     let failing = layerfs(
         &home,
@@ -111,8 +101,8 @@ fn exec_stream_passes_output_and_the_commands_exit_code() {
     let passing = layerfs(&home, &["workspace", "exec", &ws, "true", "--stream"]);
     let plain = layerfs(&home, &["workspace", "exec", &ws, "exit 4"]);
 
-    ok(&home, "workspace.unmount", &[("workspace", t(&ws))]);
-    ok(&home, "sandbox.remove", &[("sandbox", t("s1"))]);
+    ok(&home, "workspace.unmount", &[("ws", t(&ws))]);
+    ok(&home, "sandbox.close", &[("name", t("s1"))]);
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&folder);
 
@@ -120,8 +110,7 @@ fn exec_stream_passes_output_and_the_commands_exit_code() {
     assert_eq!(String::from_utf8_lossy(&failing.stdout), "streamed\n");
     assert_eq!(String::from_utf8_lossy(&failing.stderr), "oops\n");
     assert_eq!(passing.status.code(), Some(0), "{passing:?}");
-    // without --stream the command's code is in the JSON, and the process
-    // exits with it too (call surface 2.0 `exit_codes.command`)
-    assert_eq!(plain.status.code(), Some(4), "{plain:?}");
+    // without --stream the command's code is in the JSON, and exit is 0
+    assert_eq!(plain.status.code(), Some(0), "{plain:?}");
     assert!(String::from_utf8_lossy(&plain.stdout).contains("\"exit_code\":4"));
 }

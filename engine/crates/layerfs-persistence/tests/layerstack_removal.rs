@@ -22,7 +22,7 @@ const CURSOR: [u8; 32] = [31; 32];
 
 fn sqlite(path: std::path::PathBuf) -> PersistenceConfig {
     PersistenceConfig::sqlite(path)
-        .with_sqlite_profile(SqlitePersistenceProfile::Normal)
+        .with_sqlite_profile(SqlitePersistenceProfile::Disposable)
         .with_sqlite_pack_layout(SqlitePackLayout::GroupRowsIndexed)
         .with_sqlite_acquisition(SqliteAcquisitionSchema::Tables)
 }
@@ -69,7 +69,6 @@ fn commit(history: &dyn HistoryCatalog, branch: BranchId, tag: u8) -> CommitReco
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap();
     let CommitOutcome::Committed { record, .. } = outcome else {

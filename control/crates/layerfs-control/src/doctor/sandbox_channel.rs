@@ -1,13 +1,10 @@
-//! One bounded authenticated daemon observation; no pool, lease or reconnect:
-//! `sandbox.daemon_keys` to `sandbox.daemon_ready`, the daemon's Workspace
-//! list (`workspace_target`) and `sandbox.session`.
-use super::workspace_target::{Listed, Listing};
-use super::{remove_fix, Budget, Checks};
-use crate::doctor::report::NoVerdict;
+//! One bounded authenticated daemon observation; no pool, lease or reconnect.
+use super::{Budget, Checks};
 use layerfs_bridge::control::{DaemonPhase, HelloRequest, Reply, Request, SdkCall, SdkValue};
 use layerfs_bridge::duplex::{initiate_observed, ChannelError};
 use layerfs_home::secrets;
 use layerfs_sandbox::daemon::channel::Control;
+use std::collections::BTreeMap;
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -45,17 +42,7 @@ impl Drop for Fence {
     }
 }
 
-/// What the daemon said of its Workspaces: how its list went, and its rows.
-pub(super) type Observed = (Listing, Vec<Listed>);
-
-/// Sandbox `sandbox`'s daemon at its saved `keys`, under `budget`.
-pub(super) fn observe(
-    sandbox: &str,
-    keys: &SdkValue,
-    budget: &Budget,
-    checks: &mut Checks,
-) -> Observed {
-    let nothing = (Listing::NotAsked, Vec::new());
+pub(super) fn observe(keys: &SdkValue, budget: &Budget, checks: &mut Checks) {
     let endpoint = keys
         .get_text("endpoint")
         .and_then(|s| s.parse::<SocketAddr>().ok())
@@ -68,90 +55,96 @@ pub(super) fn observe(
     ) else {
         checks.fail(
             "sandbox.daemon_keys",
-            "its daemon's saved endpoint or identities are malformed",
+            "Daemon endpoint or authentication/instance record is malformed",
         );
-        checks.fix("sandbox.daemon_keys", remove_fix(sandbox));
-        return nothing;
+        checks.blocked(
+            "sandbox.daemon",
+            "Daemon discovery keys are invalid",
+            "sandbox.daemon_keys",
+        );
+        return;
     };
     checks.pass(
         "sandbox.daemon_keys",
-        "its daemon's saved loopback endpoint and identities are readable",
+        "Saved loopback endpoint and fixed-size authentication identities are valid",
     );
-    const CONNECT: &str = "sandbox.daemon_connect";
     let duration = budget.remaining().unwrap_or(Duration::from_secs(10));
     if duration.is_zero() {
-        checks.timeout(CONNECT, "its time ran out before its daemon was dialled");
-        return nothing;
+        checks.unknown(
+            "sandbox.daemon",
+            "Deadline expired before daemon connection",
+        );
+        return;
     }
     let deadline = Instant::now() + duration;
     let socket = match TcpStream::connect_timeout(&endpoint, duration) {
         Ok(socket) => socket,
-        // nothing listens there: an answer, not a lost one
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
-            checks.fail(
-                CONNECT,
-                "its daemon does not answer: nothing listens on its saved endpoint",
-            );
-            checks.fix(CONNECT, remove_fix(sandbox));
-            return nothing;
-        }
         Err(_) => {
-            checks.lost(CONNECT, "its daemon's saved endpoint was not reached");
-            return nothing;
+            checks.unknown(
+                "sandbox.daemon",
+                "Saved daemon endpoint was not reached; daemon health is unknown",
+            );
+            return;
         }
     };
-    checks.pass(CONNECT, "its daemon accepts a connection");
-    const AUTH: &str = "sandbox.daemon_auth";
+    checks.pass(
+        "sandbox.daemon_connect",
+        "Saved daemon endpoint accepted a connection",
+    );
     let Ok(_fence) = Fence::new(&socket, deadline) else {
-        checks.unknown(AUTH, "the doctor's own socket deadline could not be set");
-        return nothing;
+        checks.unknown(
+            "sandbox.daemon",
+            "Could not establish the diagnostic socket deadline",
+        );
+        return;
     };
     let connection = match initiate_observed(socket, &secret, peer).result {
         Ok(connection) => connection,
         Err(ChannelError::Noise(_)) => {
-            checks.fail(AUTH, "its daemon refused the saved identities");
-            checks.fix(AUTH, remove_fix(sandbox));
-            return nothing;
+            checks.fail(
+                "sandbox.daemon_auth",
+                "Saved daemon authentication or expected peer identity was rejected",
+            );
+            checks.blocked(
+                "sandbox.workspaces",
+                "Daemon authentication failed",
+                "sandbox.daemon_auth",
+            );
+            return;
         }
         Err(_) => {
-            // a full admission queue and a lost transport look the same here
-            checks.lost(AUTH, "the handshake with its daemon did not complete");
-            return nothing;
+            checks.unknown("sandbox.daemon_auth", "Handshake did not complete; admission saturation and transport loss cannot be distinguished from this observation");
+            return;
         }
     };
-    checks.pass(AUTH, "its daemon accepts the saved identities");
+    checks.pass(
+        "sandbox.daemon_auth",
+        "Daemon peer authenticated with saved control identities",
+    );
     let mut control = Control::new(connection);
-    let observed = inspect(sandbox, &mut control, instance, deadline, checks);
-    const SESSION: &str = "sandbox.session";
+    inspect(&mut control, instance, deadline, checks);
     if control.is_failed() || Instant::now() >= deadline {
-        checks.lost(
-            SESSION,
-            "the doctor's session ended uncertain or out of time; nothing was sent again",
+        checks.unknown(
+            "sandbox.session",
+            "Diagnostic exchange ended uncertain or expired; no EndSession was sent or replayed",
         );
-        return observed;
+        return;
     }
     // Ends only this control conversation; the protocol explicitly preserves
     // filesystem ownership. The original socket deadline still applies.
     match control.call(Request::EndSession) {
-        Ok(Reply::SessionEnded) => checks.pass(SESSION, "the doctor's own session ended cleanly"),
-        _ => checks.lost(
-            SESSION,
-            "the end of the doctor's own session was not acknowledged; not sent again",
+        Ok(Reply::SessionEnded) => checks.pass(
+            "sandbox.session",
+            "Own diagnostic control session ended and its socket was fenced",
+        ),
+        _ => checks.unknown(
+            "sandbox.session",
+            "Own-session end acknowledgement or socket fence was uncertain; not replayed",
         ),
     }
-    observed
 }
 
-fn inspect(
-    sandbox: &str,
-    control: &mut Control,
-    instance: [u8; 32],
-    deadline: Instant,
-    checks: &mut Checks,
-) -> Observed {
-    let nothing = (Listing::NotAsked, Vec::new());
-    const INSTANCE: &str = "sandbox.daemon_instance";
-    const READY: &str = "sandbox.daemon_ready";
+fn inspect(control: &mut Control, instance: [u8; 32], deadline: Instant, checks: &mut Checks) {
     // Observe identity explicitly so a restarted instance is not collapsed into a
     // generic correlation failure. No startup wait or lifecycle action is requested.
     match control.call(Request::Hello(HelloRequest {
@@ -160,59 +153,72 @@ fn inspect(
     })) {
         Ok(Reply::Hello(status)) if status.instance != instance => {
             checks.fail(
-                INSTANCE,
-                "another daemon answers than the one it was started with",
+                "sandbox.daemon_instance",
+                "Authenticated daemon is a different instance than the saved sandbox",
             );
-            checks.fix(INSTANCE, remove_fix(sandbox));
-            return nothing;
+            checks.blocked(
+                "sandbox.workspaces",
+                "Saved daemon instance is stale",
+                "sandbox.daemon_instance",
+            );
+            return;
         }
         Ok(Reply::Hello(status)) => {
-            checks.pass(INSTANCE, "the daemon is the one it was started with");
-            match status.phase {
-                DaemonPhase::ControlReady => {
-                    checks.pass(READY, "its daemon is ready for calls");
-                }
-                DaemonPhase::Retained => {
-                    checks.fail(READY, "its daemon's startup failed and is kept as it ended");
-                    checks.fix(READY, remove_fix(sandbox));
-                    return nothing;
-                }
-                phase => {
-                    let step = match phase {
-                        DaemonPhase::Installing => "its Store is being installed",
-                        _ => "its Store is not installed yet",
-                    };
-                    checks.warning(READY, format!("its daemon is still starting ({step})"));
-                    return nothing;
-                }
+            checks.pass(
+                "sandbox.daemon_instance",
+                "Daemon incarnation matches the saved sandbox",
+            );
+            if status.phase != DaemonPhase::ControlReady {
+                checks.fail(
+                    "sandbox.daemon_ready",
+                    format!("Daemon is {:?}, not ControlReady", status.phase),
+                );
+                checks.blocked(
+                    "sandbox.workspaces",
+                    "Daemon is not ControlReady",
+                    "sandbox.daemon_ready",
+                );
+                return;
             }
+            checks.pass(
+                "sandbox.daemon_ready",
+                "Daemon reports ControlReady without waiting for startup",
+            );
         }
         Ok(Reply::Refused(_)) => {
-            checks.unknown(READY, "its daemon refused to say whether it is ready");
-            return nothing;
+            checks.unknown(
+                "sandbox.daemon_ready",
+                "Daemon refused the readiness observation",
+            );
+            return;
         }
         _ => {
-            checks.lost(
-                READY,
-                "its daemon's readiness reply was lost; not asked again",
+            checks.unknown(
+                "sandbox.daemon_ready",
+                "Readiness reply was lost or invalid; no request was replayed",
             );
-            return nothing;
+            return;
         }
     }
-    workspaces(control, deadline)
+    workspaces(control, deadline, checks);
+    checks.skip("sandbox.filesystem_serving", "Control observations do not verify application FUSE/NFS reads, overlay integrity or Store integrity");
 }
 
-/// The daemon's whole Workspace list, in bounded pages under one
-/// generation; any page that does not fit gives no verdict, and nothing is
-/// asked again.
-fn workspaces(control: &mut Control, deadline: Instant) -> Observed {
-    let lost = || (Listing::NoVerdict(NoVerdict::Lost), Vec::new());
+fn workspaces(control: &mut Control, deadline: Instant, checks: &mut Checks) {
     let mut offset = 0i64;
     let mut generation: Option<String> = None;
-    let mut rows_seen: Vec<Listed> = Vec::new();
+    let mut observed = 0i64;
+    let mut activities: BTreeMap<String, i64> = BTreeMap::new();
+    let mut last: Option<String> = None;
+    let mut mounted = 0i64;
+    let mut retained_examples = Vec::new();
     loop {
         if Instant::now() >= deadline {
-            return (Listing::NoVerdict(NoVerdict::Timeout), Vec::new());
+            checks.unknown(
+                "sandbox.workspaces",
+                format!("Deadline expired after inspecting {observed} workspace records"),
+            );
+            return;
         }
         let args = SdkValue::map([
             ("offset", SdkValue::Int(offset)),
@@ -227,33 +233,47 @@ fn workspaces(control: &mut Control, deadline: Instant) -> Observed {
         }));
         let value = match answer {
             Ok(Reply::Sdk(value)) => value,
-            // the registry's admission is held: no retry
-            Ok(Reply::SdkRefused(refusal)) if refusal.code == "Busy" => {
-                return (Listing::NoVerdict(NoVerdict::Busy), Vec::new())
+            Ok(Reply::SdkRefused(refusal)) => {
+                match refusal.code.as_str() {
+                    "Busy" => checks.unknown("sandbox.workspaces", "Busy: daemon registry admission is saturated; no retry performed"),
+                    "Changed" => checks.unknown("sandbox.workspaces", "Workspace membership changed during pagination; no stable coverage verdict"),
+                    "UnknownMethod" => checks.unknown("sandbox.workspaces", "Daemon does not support bounded diagnostic workspace enumeration"),
+                    _ => checks.unknown("sandbox.workspaces", "Daemon refused diagnostic workspace enumeration"),
+                }
+                return;
             }
-            // the doctor's own deadline closed its socket
-            Err(_) if Instant::now() >= deadline => {
-                return (Listing::NoVerdict(NoVerdict::Timeout), Vec::new())
+            _ => {
+                checks.unknown("sandbox.workspaces", format!("Workspace reply lost or invalid after {observed} records; read not replayed"));
+                return;
             }
-            // membership changed between pages, a daemon without the
-            // diagnostic list, or a lost reply: no stable answer
-            _ => return lost(),
         };
         let Some(SdkValue::List(rows)) = value.get("workspaces") else {
-            return lost();
+            checks.unknown(
+                "sandbox.workspaces",
+                "Daemon returned an invalid diagnostic page",
+            );
+            return;
         };
         let Some(current) = value
             .get_text("generation")
             .filter(|s| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         else {
-            return lost();
+            checks.unknown(
+                "sandbox.workspaces",
+                "Daemon returned no valid membership generation",
+            );
+            return;
         };
         if generation
             .as_deref()
             .is_some_and(|expected| expected != current)
             || rows.len() > 32
         {
-            return lost();
+            checks.unknown(
+                "sandbox.workspaces",
+                "Daemon diagnostic coverage changed or exceeded its page bound",
+            );
+            return;
         }
         generation = Some(current.to_owned());
         for row in rows {
@@ -261,18 +281,23 @@ fn workspaces(control: &mut Control, deadline: Instant) -> Observed {
                 .get_text("workspace")
                 .filter(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
             else {
-                return lost();
+                checks.unknown(
+                    "sandbox.workspaces",
+                    "Daemon returned an invalid workspace identity",
+                );
+                return;
             };
-            // ids come in order, each once
-            if rows_seen
-                .last()
-                .is_some_and(|previous| previous.id.as_str() >= id)
-            {
-                return lost();
+            if last.as_deref().is_some_and(|previous| previous >= id) {
+                checks.unknown(
+                    "sandbox.workspaces",
+                    "Workspace enumeration repeated or reordered an identity",
+                );
+                return;
             }
-            let activity = row.get_text("activity").unwrap_or("unknown");
+            last = Some(id.to_owned());
+            let state = row.get_text("activity").unwrap_or("unknown");
             if !matches!(
-                activity,
+                state,
                 "binding"
                     | "idle"
                     | "committing"
@@ -281,25 +306,73 @@ fn workspaces(control: &mut Control, deadline: Instant) -> Observed {
                     | "failed"
                     | "attaching"
             ) {
-                return lost();
+                checks.unknown(
+                    "sandbox.workspaces",
+                    "Daemon returned an unknown workspace activity",
+                );
+                return;
             }
-            let Some(SdkValue::Bool(mounted)) = row.get("mounted") else {
-                return lost();
-            };
-            rows_seen.push(Listed {
-                id: id.to_owned(),
-                activity: activity.to_owned(),
-                mounted: *mounted,
-            });
+            match row.get("mounted") {
+                Some(SdkValue::Bool(true)) => mounted += 1,
+                Some(SdkValue::Bool(false)) => {}
+                _ => {
+                    checks.unknown(
+                        "sandbox.workspaces",
+                        "Daemon returned no valid mount observation",
+                    );
+                    return;
+                }
+            }
+            if matches!(state, "failed" | "uncertain") && retained_examples.len() < 16 {
+                retained_examples.push(SdkValue::map([
+                    ("workspace", SdkValue::text(id)),
+                    ("activity", SdkValue::text(state)),
+                    ("mounted", SdkValue::Bool(row.get_bool("mounted"))),
+                ]));
+            }
+            *activities.entry(state.to_owned()).or_default() += 1;
+            observed += 1;
         }
-        let observed = i64::try_from(rows_seen.len()).unwrap_or(i64::MAX);
         match value.get("next_offset") {
             Some(SdkValue::Int(next)) if *next == offset + rows.len() as i64 && *next > offset => {
                 offset = *next
             }
             Some(SdkValue::Null) if value.get_int("total") == Some(observed) => break,
-            _ => return lost(),
+            _ => {
+                checks.unknown(
+                    "sandbox.workspaces",
+                    "Daemon diagnostic pagination did not account for every workspace",
+                );
+                return;
+            }
         }
     }
-    (Listing::Read, rows_seen)
+    let retained = activities.get("failed").copied().unwrap_or(0)
+        + activities.get("uncertain").copied().unwrap_or(0);
+    checks.pass(
+        "sandbox.workspaces",
+        format!("Inspected all {observed} registry workspace records across bounded pages"),
+    );
+    checks.evidence(
+        "sandbox.workspaces",
+        SdkValue::map([
+            ("count", SdkValue::Int(observed)),
+            ("mounted", SdkValue::Int(mounted)),
+            ("retained_examples", SdkValue::List(retained_examples)),
+            ("retained_examples_truncated", SdkValue::Bool(retained > 16)),
+            (
+                "activities",
+                SdkValue::Map(
+                    activities
+                        .into_iter()
+                        .map(|(k, v)| (k, SdkValue::Int(v)))
+                        .collect(),
+                ),
+            ),
+        ]),
+    );
+    if retained > 0 {
+        checks.warning("sandbox.workspace_retained", format!("{retained} workspaces retain failed or uncertain activity; inspect their original operation evidence"));
+    }
+    checks.skip("sandbox.overlay_state", "Dirty counts and pending merges are not read by the registry-only diagnostic; no overlay or Store integrity claim");
 }

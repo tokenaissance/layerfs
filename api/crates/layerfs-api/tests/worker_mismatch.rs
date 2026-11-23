@@ -22,17 +22,13 @@ fn a_store_call_to_an_old_worker_names_stop_then_start_and_sends_nothing() {
         ("kind", t("sqlite")),
         ("binding", SdkValue::Bytes(vec![7; 16])),
         ("cursor", SdkValue::Bytes(vec![8; 32])),
-        ("profile", t("normal")),
+        ("profile", t("disposable")),
         ("machine", t("box")),
     ]);
     write_record(&paths::store_record(&home, "shop"), &store).unwrap();
     let project = SdkValue::map([("name", t("api"))]);
     write_record(&paths::project_record(&home, "shop", "api"), &project).unwrap();
-    let machine = SdkValue::map([
-        ("name", t("box")),
-        ("platform", t("lima")),
-        ("vm_name", t("layerfs-00000000-box")),
-    ]);
+    let machine = SdkValue::map([("name", t("box")), ("platform", t("lima"))]);
     write_record(&paths::machine_record(&home, "box"), &machine).unwrap();
 
     // an old worker: its hello is `{ ready: true }`, with no protocol

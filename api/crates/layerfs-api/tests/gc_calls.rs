@@ -3,6 +3,12 @@
 //! refusal per call plus the three removal results and the §11 report.
 use layerfs_api::Kind;
 use layerfs_bridge::control::SdkValue;
+use layerfs_history::records::{GcIntent, GcIntentKind, GcScopeKind};
+use layerfs_history::PlaceAuthority;
+use layerfs_store::open_args::OpenArgs;
+use layerfs_store::record::StoreRecord;
+use layerfs_store::service::{branch_named, with_service};
+use layerfs_store_service::history::lookup;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -82,10 +88,10 @@ fn the_four_gc_calls_take_ids_only() {
         ),
         ("project.delete", &[("project", Kind::Project)]),
         (
-            "project.hide_path",
+            "project.remove_file",
             &[("project", Kind::Project), ("path", Kind::Text)],
         ),
-        ("store.compact", &[("store", Kind::Name)]),
+        ("store.compact", &[("name", Kind::Name)]),
     ];
     for &(name, args) in expected {
         let spec = layerfs_api::find(name).unwrap_or_else(|| panic!("{name} is missing"));
@@ -114,10 +120,10 @@ fn wrong_kinds_and_unknown_options_are_refused_before_any_effect() {
         ),
         ("project.delete", &[("project", SdkValue::Int(1))]),
         (
-            "project.hide_path",
+            "project.remove_file",
             &[("project", t("shop/api")), ("path", SdkValue::Int(1))],
         ),
-        ("store.compact", &[("store", SdkValue::Int(1))]),
+        ("store.compact", &[("name", SdkValue::Int(1))]),
     ];
     for &(name, fields) in wrong {
         let (code, message) = refused(&home, name, fields);
@@ -138,7 +144,7 @@ fn wrong_kinds_and_unknown_options_are_refused_before_any_effect() {
             &[("project", t("shop/api")), ("force", SdkValue::Bool(true))],
         ),
         (
-            "project.hide_path",
+            "project.remove_file",
             &[
                 ("project", t("shop/api")),
                 ("path", t("/base.txt")),
@@ -147,7 +153,7 @@ fn wrong_kinds_and_unknown_options_are_refused_before_any_effect() {
         ),
         (
             "store.compact",
-            &[("store", t("shop")), ("force", SdkValue::Bool(true))],
+            &[("name", t("shop")), ("force", SdkValue::Bool(true))],
         ),
     ];
     for &(name, fields) in unknown {
@@ -165,48 +171,36 @@ fn wrong_kinds_and_unknown_options_are_refused_before_any_effect() {
 fn branch_remove_refuses_reserved_and_absent_branches() {
     let (home, folder) = project();
     let (code, message) = refused(&home, "branch.remove", &[p(), ("branch", t("main"))]);
-    assert_eq!(code, "InvalidInput", "{message}");
+    assert_eq!(code, "ReservedName", "{message}");
     // nothing ran: main is still there
     ok(&home, "branch.get", &[p(), ("branch", t("main"))]);
     let (code, message) = refused(&home, "branch.remove", &[p(), ("branch", t("ghost"))]);
-    assert_eq!(code, "NotFound", "{message}");
-    // a live Branch is hidden by the marker and reported as `removed`
-    for name in ["work", "work2"] {
-        ok(
-            &home,
-            "branch.fork",
-            &[p(), ("name", t(name)), ("from", t("main"))],
-        );
-    }
-    let removed = ok(&home, "branch.remove", &[p(), ("branch", t("work"))]);
-    assert_eq!(removed, SdkValue::map([("ok", SdkValue::Bool(true))]));
-    let removed = ok(
+    assert_eq!(code, "NoSuchBranch", "{message}");
+    // a live Branch is hidden by the marker and reported as `Removed`
+    ok(
         &home,
-        "branch.remove",
-        &[
-            p(),
-            ("branch", t("work2")),
-            ("detail", SdkValue::Bool(true)),
-        ],
+        "branch.fork",
+        &[p(), ("name", t("work")), ("from_branch", t("main"))],
     );
-    assert_eq!(removed.get_text("outcome"), Some("removed"));
-    assert_eq!(removed.get_text("branch"), Some("work2"));
-    assert!(removed
-        .get_text("removed_at")
-        .is_some_and(|at| at.ends_with('Z')));
+    let removed = ok(&home, "branch.remove", &[p(), ("branch", t("work"))]);
+    assert_eq!(removed.get_text("kind"), Some("Removed"));
+    // the project is the caller's <store>/<project>, not the Store's inner name
+    assert_eq!(removed.get_text("project"), Some("shop/api"));
+    assert_eq!(removed.get_text("branch"), Some("work"));
+    assert!(removed.get_int("removed_ms").is_some_and(|ms| ms >= 0));
     let (code, message) = refused(&home, "branch.get", &[p(), ("branch", t("work"))]);
-    assert_eq!(code, "NotFound", "{message}");
+    assert_eq!(code, "NoSuchBranch", "{message}");
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(folder);
 }
 
 #[test]
-fn project_hide_path_checks_its_path_grammar_then_reports_markers() {
+fn project_remove_file_checks_its_path_grammar_then_reports_markers() {
     let (home, folder) = project();
     for bad in [
         "", "/", "//a", "a//b", "a/", "./a", "a/./b", ".", "..", "\\",
     ] {
-        let (code, message) = refused(&home, "project.hide_path", &[p(), ("path", t(bad))]);
+        let (code, message) = refused(&home, "project.remove_file", &[p(), ("path", t(bad))]);
         assert_eq!(code, "InvalidInput", "{bad:?}: {message}");
     }
     // no effect: the file the bad calls named is still readable
@@ -217,28 +211,23 @@ fn project_hide_path_checks_its_path_grammar_then_reports_markers() {
     );
     assert_eq!(read.get_text("text"), Some("hello\n"));
 
-    let detail = ("detail", SdkValue::Bool(true));
     let removed = ok(
         &home,
-        "project.hide_path",
-        &[p(), ("path", t("/base.txt")), detail.clone()],
+        "project.remove_file",
+        &[p(), ("path", t("/base.txt"))],
     );
-    assert_eq!(removed.get_text("outcome"), Some("hidden"));
-    assert_eq!(removed.get("unchanged"), Some(&SdkValue::Bool(false)));
-    assert_eq!(removed.get_text("path"), Some("/base.txt"));
+    assert_eq!(removed.get_text("kind"), Some("Removed"));
+    // the same full project name the caller passed
+    assert_eq!(removed.get_text("project"), Some("shop/api"));
     assert!(removed.get_int("frontier_serial").is_some());
-    assert!(removed
-        .get_text("hidden_at")
-        .is_some_and(|at| at.ends_with('Z')));
-    // a repeat at the same frontier is unchanged; its short form says so
-    let short = ok(&home, "project.hide_path", &[p(), ("path", t("/base.txt"))]);
-    assert_eq!(short, SdkValue::map([("unchanged", SdkValue::Bool(true))]));
+    assert!(removed.get_int("removed_ms").is_some_and(|ms| ms >= 0));
+    // a repeat at the same frontier is UpToDate
     let repeat = ok(
         &home,
-        "project.hide_path",
-        &[p(), ("path", t("/base.txt")), detail],
+        "project.remove_file",
+        &[p(), ("path", t("/base.txt"))],
     );
-    assert_eq!(repeat.get_text("outcome"), Some("unchanged"));
+    assert_eq!(repeat.get_text("kind"), Some("UpToDate"));
     assert_eq!(
         repeat.get_int("frontier_serial"),
         removed.get_int("frontier_serial")
@@ -249,7 +238,7 @@ fn project_hide_path_checks_its_path_grammar_then_reports_markers() {
         "file.read",
         &[p(), ("branch", t("main")), ("path", t("/base.txt"))],
     );
-    assert_eq!(code, "NotFound", "{message}");
+    assert_eq!(code, "Removed", "{message}");
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -258,20 +247,14 @@ fn project_hide_path_checks_its_path_grammar_then_reports_markers() {
 fn project_delete_reports_removal_and_retires_the_entry() {
     let (home, folder) = project();
     let (code, message) = refused(&home, "project.delete", &[("project", t("shop/ghost"))]);
-    assert_eq!(code, "NotFound", "{message}");
-    let removed = ok(
-        &home,
-        "project.delete",
-        &[p(), ("detail", SdkValue::Bool(true))],
-    );
-    assert_eq!(removed.get_text("outcome"), Some("deleted"));
-    assert_eq!(removed.get("ok"), Some(&SdkValue::Bool(true)));
-    assert!(removed
-        .get_text("deleted_at")
-        .is_some_and(|at| at.ends_with('Z')));
-    assert_eq!(removed.get("home_entry_kept"), Some(&SdkValue::Bool(false)));
+    assert_eq!(code, "NoSuchProject", "{message}");
+    let removed = ok(&home, "project.delete", &[p()]);
+    assert_eq!(removed.get_text("kind"), Some("Removed"));
+    assert_eq!(removed.get_text("project"), Some("shop/api"));
+    assert!(removed.get_int("deleted_ms").is_some_and(|ms| ms >= 0));
+    assert!(removed.get_bool("home_entry_removed"));
     let (code, _) = refused(&home, "project.get", &[p()]);
-    assert_eq!(code, "NotFound");
+    assert_eq!(code, "NoSuchProject");
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -293,7 +276,7 @@ fn project_init_after_delete_is_nametaken_deleted() {
         &mut |_| {},
     )
     .unwrap_err();
-    assert_eq!(refusal.code, "Exists", "{}", refusal.message);
+    assert_eq!(refusal.code, "NameTaken", "{}", refusal.message);
     let holder = refusal.detail.get("holder").expect("holder detail");
     assert_eq!(holder.get_text("kind"), Some("project"), "{refusal:?}");
     assert_eq!(holder.get_text("name"), Some("api"));
@@ -313,7 +296,7 @@ fn store_compact_sends_each_phase_as_a_progress_event() {
         let report = layerfs_api::call(
             Some(&home),
             "store.compact",
-            map(&[("store", t("shop")), ("detail", SdkValue::Bool(true))]),
+            map(&[("name", t("shop"))]),
             &mut |event| {
                 let progress = event.get("progress").expect("a progress event").clone();
                 assert_eq!(progress.get("done"), Some(&SdkValue::Null), "{progress:?}");
@@ -322,199 +305,19 @@ fn store_compact_sends_each_phase_as_a_progress_event() {
             },
         )
         .unwrap_or_else(|refusal| panic!("store.compact: {refusal:?}"));
-        (
-            report.get_text("outcome").expect("outcome").to_owned(),
-            phases,
-        )
+        (report.get_text("path").expect("path").to_owned(), phases)
     };
     // nothing is dead yet: the run stops after its mark
-    let (outcome, phases) = compact();
+    let (path, phases) = compact();
     assert_eq!(
-        (outcome.as_str(), phases.as_slice()),
-        ("unchanged", ["mark".to_owned()].as_slice())
+        (path.as_str(), phases.as_slice()),
+        ("none", ["mark".to_owned()].as_slice())
     );
     // a deleted project makes the next run a rebuild, through all four phases
     ok(&home, "project.delete", &[p()]);
-    let (outcome, phases) = compact();
-    assert_eq!(outcome, "compacted");
+    let (path, phases) = compact();
+    assert_eq!(path, "rebuild");
     assert_eq!(phases, ["mark", "build", "verify", "install"]);
-    std::fs::remove_dir_all(home).unwrap();
-    let _ = std::fs::remove_dir_all(folder);
-}
-
-/// Registers a mount intent of Workspace `[7; 32]` on a new Branch
-/// `sandbox` of `shop/api`, placed with Sandbox `sandbox` and owned by this
-/// live process, as a daemon's mount registers one.
-fn plant_mount(home: &Path, sandbox: &str) {
-    use layerfs_history::{GcIntent, GcIntentKind, GcScopeKind};
-    use layerfs_store_service::history::admission;
-    ok(home, "branch.fork", &[p(), ("name", t(sandbox))]);
-    let got = ok(
-        home,
-        "branch.get",
-        &[
-            p(),
-            ("branch", t(sandbox)),
-            ("detail", SdkValue::Bool(true)),
-        ],
-    );
-    let id = got.get_text("id").expect("the Branch's id");
-    let branch = layerfs_bridge::sdk_values::unhex(id).expect("hex");
-    let record = layerfs_store::record::StoreRecord::read(home, "shop")
-        .unwrap()
-        .unwrap();
-    let args =
-        layerfs_store::open_args::OpenArgs::in_root(home, "shop", Some(record.to_record().clone()));
-    let (runtime, boot) = admission::owner_tokens(&format!("ws:{sandbox}"));
-    let intent = GcIntent::shared(
-        admission::op_id(),
-        GcIntentKind::Mount,
-        GcScopeKind::Branch,
-        branch,
-    )
-    .named(Some("api"), Some(sandbox))
-    .placed(Some([7; 32]), Some(sandbox), Some("native"))
-    .owned(Some(&runtime), Some(&boot));
-    layerfs_store::service::with_service(&args, |service| {
-        let catalog = service.store.history();
-        catalog
-            .gc_register(&intent)
-            .map_err(|error| layerfs_home::outcome::failed(error.to_string()))
-    })
-    .unwrap();
-}
-
-/// A live-owned mount intent of a Sandbox this home no longer records (one
-/// `sandbox remove` forgot without stopping its daemon) is not ended by
-/// anything that cannot prove its owner gone (RV5 FAIL-1): `store compact`
-/// and `branch remove` stay `InUse` (mounts active), and `store
-/// doctor` adds no leftover check (V20-4).
-#[test]
-fn a_live_mount_intent_of_a_forgotten_sandbox_keeps_holding_the_store() {
-    let (home, folder) = project();
-    plant_mount(&home, "gone");
-    let doctor = ok(&home, "store.doctor", &[("store", t("shop"))]);
-    assert!(!format!("{doctor:?}").contains("gone"), "{doctor:?}");
-    for _ in 0..2 {
-        let (code, message) = refused(&home, "store.compact", &[("store", t("shop"))]);
-        assert_eq!(code, "InUse", "{message}");
-    }
-    let (code, message) = refused(&home, "branch.remove", &[p(), ("branch", t("gone"))]);
-    assert_eq!(
-        (code.as_str(), message.as_str()),
-        ("InUse", "mounts active: 1 holder(s)")
-    );
-    std::fs::remove_dir_all(home).unwrap();
-    let _ = std::fs::remove_dir_all(folder);
-}
-
-/// Records native Sandbox `sb1` of project `project`, started: a daemon
-/// whose process has already ended (a child of this test), so nothing runs
-/// a daemon, and its Workspace `[7; 32]` of Branch `sb1` mounted at
-/// `/w/sb1`.
-#[cfg(target_os = "macos")]
-fn ended_native_sandbox(home: &Path, project: &str) {
-    use layerfs_home::home::{paths, write_record};
-    use layerfs_sandbox::record::{DaemonRecord, Local, WorkspaceRecord};
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let process = layerfs_bridge::process::LocalProcess::observe(child.id()).unwrap();
-    child.kill().unwrap();
-    child.wait().unwrap();
-    let id = layerfs_home::home::opened(home).unwrap().id;
-    let name = format!("{}sb1", layerfs_home::names::provider_prefix(&id));
-    let run = paths::run_root(home).join(&name);
-    std::fs::create_dir_all(&run).unwrap();
-    let daemon = DaemonRecord::local(Local {
-        platform: "mac".to_owned(),
-        name,
-        container: "ab".repeat(32),
-        runtime: "native",
-        uid: layerfs_home::home::flock::euid(),
-        gid: layerfs_home::home::flock::egid(),
-        directory: run.display().to_string(),
-        process: (
-            process.pid,
-            process.start,
-            format!("{:032x}", process.boot.unwrap()),
-        ),
-        port: 9,
-        image: "local".to_owned(),
-        labels: Vec::new(),
-    });
-    write_record(
-        &paths::sandbox_record(home, "sb1"),
-        &map(&[
-            ("name", t("sb1")),
-            ("project", t(project)),
-            ("machine", t("native")),
-            ("id", t("sb1")),
-            ("runtime", t("native")),
-            ("daemon", daemon.to_record()),
-        ]),
-    )
-    .unwrap();
-    let workspace = "07".repeat(32);
-    let records = paths::sandbox_dir(home, "sb1").join("workspace");
-    std::fs::create_dir_all(&records).unwrap();
-    WorkspaceRecord::mounted(workspace.clone(), None, "sb1", "/w/sb1", 1)
-        .write(&records.join(format!("{workspace}.json")))
-        .unwrap();
-}
-
-/// `sandbox.remove sb1 --force`'s `unmounted` and `left`.
-#[cfg(target_os = "macos")]
-fn force_removed(home: &Path) -> (Vec<String>, Vec<String>) {
-    let mut sink = |_| {};
-    let mut events = layerfs_home::events::Events::new(&mut sink);
-    let request = layerfs_sandbox::family::RemoveRequest {
-        name: "sb1".to_owned(),
-        force: true,
-    };
-    match layerfs_sandbox::family::remove(home, &mut events, &request) {
-        Ok(layerfs_sandbox::family::Removed::Stopped { unmounted, left }) => (unmounted, left),
-        Ok(_) => panic!("Sandbox sb1 was not stopped"),
-        Err(refusal) => panic!("sandbox.remove: {refusal:?}"),
-    }
-}
-
-/// A forced remove of a native Sandbox ends, once its runtime is stopped,
-/// the mount intent each of its Workspaces held (RV5 FAIL-2): `left` is
-/// empty, and `branch remove` and `store compact` are admitted after it.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_forced_native_remove_ends_its_workspaces_mount_intents() {
-    let (home, folder) = project();
-    plant_mount(&home, "sb1");
-    let (code, message) = refused(&home, "store.compact", &[("store", t("shop"))]);
-    assert_eq!(code, "InUse", "{message}");
-    ended_native_sandbox(&home, "shop/api");
-    let (unmounted, left) = force_removed(&home);
-    assert_eq!(unmounted, ["sb1:/w/sb1"]);
-    assert!(left.is_empty(), "{left:?}");
-    ok(&home, "branch.remove", &[p(), ("branch", t("sb1"))]);
-    ok(&home, "store.compact", &[("store", t("shop"))]);
-    std::fs::remove_dir_all(home).unwrap();
-    let _ = std::fs::remove_dir_all(folder);
-}
-
-/// A mount intent a forced native remove cannot end (here its Store cannot
-/// be opened) is a sentence of `left` saying why, what it refuses and what
-/// ends it on this computer, not an answer that claims it ended.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_mount_intent_a_forced_remove_cannot_end_is_left() {
-    let (home, folder) = project();
-    ended_native_sandbox(&home, "ghost/api");
-    let (_, left) = force_removed(&home);
-    assert_eq!(
-        left,
-        ["Workspace /w/sb1's mount intent was not ended (no Store named ghost): `layerfs branch \
-          remove` of its Branch and `layerfs store compact` are refused while it remains; nothing \
-          on this computer can prove its owner gone, so it stays"]
-    );
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -523,64 +326,48 @@ fn a_mount_intent_a_forced_remove_cannot_end_is_left() {
 fn store_compact_refuses_an_unknown_store_and_reports_a_run() {
     let home = tempdir("compact-none");
     layerfs_api::home::open(&home).unwrap();
-    let (code, message) = refused(&home, "store.compact", &[("store", t("ghost"))]);
-    assert_eq!(code, "NotFound", "{message}");
+    let (code, message) = refused(&home, "store.compact", &[("name", t("ghost"))]);
+    assert_eq!(code, "NoSuchStore", "{message}");
     std::fs::remove_dir_all(home).unwrap();
 
     let (home, folder) = project();
-    // the short form: the bytes freed alone
-    let short = ok(&home, "store.compact", &[("store", t("shop"))]);
-    assert_eq!(
-        layerfs_api::json::print(&short),
-        r#"{"freed_bytes":0}"#,
-        "nothing is dead yet"
-    );
-    let report = ok(
-        &home,
-        "store.compact",
-        &[("store", t("shop")), ("detail", SdkValue::Bool(true))],
-    );
-    assert_eq!(report.get_text("store"), Some("shop"));
-    let outcome = report.get_text("outcome").expect("outcome");
-    assert!(matches!(outcome, "unchanged" | "compacted"), "{outcome}");
-    let before = report.get_int("generation_before").unwrap();
-    let after = report.get_int("generation_after").unwrap();
-    if outcome == "unchanged" {
+    let report = ok(&home, "store.compact", &[("name", t("shop"))]);
+    assert_eq!(report.get_text("kind"), Some("Compacted"));
+    let path = report.get_text("path").expect("path");
+    assert!(matches!(path, "none" | "rebuild"), "{path}");
+    let generation = report.get("generation").expect("generation");
+    let before = generation.get_int("before").unwrap();
+    let after = generation.get_int("after").unwrap();
+    if path == "none" {
         assert_eq!(before, after);
     } else {
         assert_eq!(after, before + 1);
     }
     for field in [
-        "freed_bytes",
-        "dead_bytes",
-        "discarded_bytes",
-        "reusable_bytes",
+        "dead_bytes_bound",
+        "dead_bytes_refined",
+        "logical_discarded",
+        "backend_reusable",
+        "physical_shrink",
         "peak_temp_bytes",
         "estimate",
         "zero_reasons",
         "kept_waste",
-        "delta_base_references",
-        "delta_base_references_count",
-        "residue_bytes",
-        "residue_artifacts",
+        "residue",
     ] {
         assert!(report.get(field).is_some(), "missing {field}");
     }
-    assert_eq!(report.get("residue_reason"), Some(&SdkValue::Null));
     let kept = report.get("kept_waste").expect("kept_waste");
     for field in [
         "dead_in_retained_packs_bytes",
-        "delta_bases_bytes",
+        "delta_bases",
         "inode_blocks_bytes",
     ] {
         assert!(kept.get(field).is_some(), "missing kept_waste.{field}");
     }
-    // the run settled: the Store's record keeps no operation
-    let record =
-        layerfs_api::home::read_record(&layerfs_api::home::paths::store_record(&home, "shop"))
-            .unwrap()
-            .unwrap();
-    assert_eq!(record.get("op"), None, "{record:?}");
+    let residue = report.get("residue").expect("residue");
+    assert!(residue.get("bytes").is_some());
+    assert!(residue.get("artifacts").is_some());
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -596,7 +383,7 @@ fn a_bare_project_name_is_refused_by_every_project_call() {
         ),
         ("project.delete", &[("project", t("api"))]),
         (
-            "project.hide_path",
+            "project.remove_file",
             &[("project", t("api")), ("path", t("/base.txt"))],
         ),
     ];
@@ -606,8 +393,381 @@ fn a_bare_project_name_is_refused_by_every_project_call() {
         assert!(message.contains("with its Store"), "{name}: {message}");
     }
     // store.compact takes a Store name; a project path is not one
-    let (code, message) = refused(&home, "store.compact", &[("store", t("shop/api"))]);
+    let (code, message) = refused(&home, "store.compact", &[("name", t("shop/api"))]);
     assert_eq!(code, "InvalidInput", "{message}");
     assert!(message.contains("store name"), "{message}");
     std::fs::remove_dir_all(home).unwrap();
+}
+
+fn future_ms() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_millis();
+    i64::try_from(now).expect("the clock fits an i64") + 60_000
+}
+
+/// `store.repair_mount_holders` is the explicit two-step operator repair:
+/// preview answers the typed holder view and changes no intent; release needs
+/// a preceding settle; `settle_legacy` marks only rows with no owner or place
+/// evidence; release retains the row as the durable done audit, and the audit
+/// action reads it back in bounded pages.
+#[test]
+fn store_repair_mount_holders_is_an_explicit_two_step_operator_call() {
+    let (home, folder) = project();
+    let record = StoreRecord::read(&home, "shop").unwrap().unwrap();
+    let open = OpenArgs::of_record(&home, "shop", &record).unwrap();
+    // The fixture's main Branch is the Branch the project recorded, read from
+    // the name index. `store.repair_mount_holders` is what must resolve the
+    // name `main` through `project.list_branches` (spec 4.4: a listing names
+    // the recorded Branch, not a null main id).
+    let (stack, branch) = with_service(&open, |service| {
+        let stack = lookup::project(&service.store, "api")?;
+        let main = layerfs_history::HistoryName::new("main").expect("a valid Branch name");
+        let branch = service
+            .store
+            .history()
+            .branch_named(stack.id, &main)
+            .map_err(lookup::history)?
+            .expect("the project records its main Branch")
+            .id;
+        Ok((stack.id, branch))
+    })
+    .unwrap();
+    let live = GcIntent::shared(
+        [0x21; 16],
+        GcIntentKind::Mount,
+        GcScopeKind::Branch,
+        branch.as_slice(),
+    )
+    .in_project(stack.as_slice())
+    .named(Some("api"), Some("main"))
+    .placed(Some([0x22; 32]), Some("box"), Some("box"))
+    .owned(Some("pid:1@0"), Some("boot:1"))
+    .authorized(PlaceAuthority {
+        machine_incarnation: Some("worker:1".to_owned()),
+        sandbox_generation: Some("generation:1".to_owned()),
+        lease_expires_ms: Some(future_ms()),
+        fence_token: Some("fence:1".to_owned()),
+    });
+    let legacy = GcIntent::shared(
+        [0x31; 16],
+        GcIntentKind::Mount,
+        GcScopeKind::Branch,
+        branch.as_slice(),
+    )
+    .in_project(stack.as_slice())
+    .named(Some("api"), Some("main"));
+    with_service(&open, |service| {
+        service.store.history().gc_register(&live).unwrap();
+        service.store.history().gc_register(&legacy).unwrap();
+        Ok(())
+    })
+    .unwrap();
+
+    let live_op = "21".repeat(16);
+    let legacy_op = "31".repeat(16);
+    let repair = |action: &str, op: Option<&str>, legacy: bool| {
+        let mut fields = vec![
+            ("name", t("shop")),
+            ("project", t("api")),
+            ("branch", t("main")),
+            ("action", t(action)),
+        ];
+        if let Some(op) = op {
+            fields.push(("op", t(op)));
+        }
+        if legacy {
+            fields.push(("legacy", SdkValue::Bool(true)));
+        }
+        fields.push(("operator", t("alice")));
+        fields
+    };
+
+    // Preview answers the typed view, settle is a separate step, and release
+    // needs the settled state.
+    let preview = ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("preview", None, false),
+    );
+    let Some(SdkValue::List(holders)) = preview.get("holders") else {
+        panic!("preview holders: {preview:?}");
+    };
+    assert_eq!(holders.len(), 2, "{preview:?}");
+    assert_eq!(preview.get_text("action"), Some("preview"));
+    assert_eq!(preview.get("op"), Some(&SdkValue::Null));
+    assert_eq!(preview.get_text("audit"), Some("gc_intent"));
+    let live_row = holders
+        .iter()
+        .find(|row| row.get_text("op") == Some(live_op.as_str()))
+        .expect("the live holder");
+    assert_eq!(live_row.get_text("state"), Some("live"));
+    assert_eq!(live_row.get_text("machine_incarnation"), Some("worker:1"));
+    assert_eq!(
+        live_row.get_text("sandbox_generation"),
+        Some("generation:1")
+    );
+    assert_eq!(live_row.get("legacy"), Some(&SdkValue::Bool(false)));
+    assert!(matches!(
+        live_row.get("lease_expires_ms"),
+        Some(SdkValue::Int(_))
+    ));
+    let legacy_row = holders
+        .iter()
+        .find(|row| row.get_text("op") == Some(legacy_op.as_str()))
+        .expect("the legacy holder");
+    assert_eq!(legacy_row.get("legacy"), Some(&SdkValue::Bool(true)));
+    assert_eq!(legacy_row.get("lease_expires_ms"), Some(&SdkValue::Null));
+
+    let (code, message) = refused(
+        &home,
+        "store.repair_mount_holders",
+        &repair("release", Some(&live_op), false),
+    );
+    assert_eq!(code, "Conflict", "{message}");
+    // `legacy` may not touch a row with owner and place evidence.
+    let (code, message) = refused(
+        &home,
+        "store.repair_mount_holders",
+        &repair("settle", Some(&live_op), true),
+    );
+    assert_eq!(code, "InvalidInput", "{message}");
+
+    ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("settle", Some(&live_op), false),
+    );
+    let preview = ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("preview", None, false),
+    );
+    let Some(SdkValue::List(holders)) = preview.get("holders") else {
+        panic!("preview holders: {preview:?}");
+    };
+    let settled_row = holders
+        .iter()
+        .find(|row| row.get_text("op") == Some(live_op.as_str()))
+        .expect("the settled holder");
+    assert_eq!(settled_row.get_text("state"), Some("uncertain"));
+    ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("release", Some(&live_op), false),
+    );
+
+    let settled = ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("settle_legacy", None, false),
+    );
+    assert_eq!(settled.get_int("settled"), Some(1));
+    ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("release", Some(&legacy_op), false),
+    );
+    let preview = ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("preview", None, false),
+    );
+    assert!(
+        matches!(preview.get("holders"), Some(SdkValue::List(rows)) if rows.is_empty()),
+        "{preview:?}"
+    );
+
+    // Both releases retained their row as the durable operator audit, and
+    // every preview retained its own done row: the release rows keep the op,
+    // the preview rows are the operator action with no op. Admission still
+    // filters every done row.
+    let audit = ok(
+        &home,
+        "store.repair_mount_holders",
+        &repair("audit", None, false),
+    );
+    let Some(SdkValue::List(rows)) = audit.get("items") else {
+        panic!("audit items: {audit:?}");
+    };
+    let released: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.get_text("evidence")
+                .is_some_and(|evidence| evidence.starts_with("action=release;"))
+        })
+        .collect();
+    assert_eq!(released.len(), 2, "{audit:?}");
+    let previews: Vec<_> = rows
+        .iter()
+        .filter(|row| row.get_text("evidence") == Some("action=preview;operator=alice"))
+        .collect();
+    assert_eq!(previews.len(), 3, "{audit:?}");
+    for row in &previews {
+        assert_eq!(row.get("phase"), Some(&SdkValue::Null));
+        assert_eq!(row.get_text("op").map(str::len), Some(32));
+        assert_eq!(row.get_text("kind"), Some("mount"));
+        assert_eq!(row.get_text("scope_kind"), Some("branch"));
+    }
+    let released = released
+        .iter()
+        .find(|row| row.get_text("op") == Some(live_op.as_str()))
+        .expect("the released live op");
+    assert_eq!(released.get_text("kind"), Some("mount"));
+    assert_eq!(released.get_text("project"), Some("api"));
+    assert_eq!(released.get_text("branch"), Some("main"));
+    assert_eq!(released.get_text("machine"), Some("box"));
+    assert_eq!(released.get_text("sandbox"), Some("box"));
+    let evidence = released.get_text("evidence").expect("evidence");
+    assert!(
+        evidence.contains(&format!("action=release;operator=alice;op={live_op}")),
+        "{evidence}"
+    );
+    assert!(matches!(audit.get("has_more"), Some(SdkValue::Bool(false))));
+
+    // Paging is bounded by the call, not by the caller.
+    let mut paged = repair("audit", None, false);
+    paged.push(("limit", SdkValue::Int(i64::from(u32::MAX))));
+    let paged = ok(&home, "store.repair_mount_holders", &paged);
+    assert!(
+        matches!(paged.get("limit"), Some(SdkValue::Int(limit)) if *limit == i64::from(layerfs_history::MAXIMUM_AUDIT_PAGE)),
+        "{paged:?}"
+    );
+
+    // A refused call changes nothing.
+    let (code, message) = refused(
+        &home,
+        "store.repair_mount_holders",
+        &repair("inspect", None, false),
+    );
+    assert_eq!(code, "InvalidInput", "{message}");
+    let (code, message) = refused(
+        &home,
+        "store.repair_mount_holders",
+        &repair("settle", None, false),
+    );
+    assert_eq!(code, "InvalidInput", "{message}");
+    let unknown = "99".repeat(16);
+    let (code, message) = refused(
+        &home,
+        "store.repair_mount_holders",
+        &repair("release", Some(&unknown), false),
+    );
+    assert_eq!(code, "NotFound", "{message}");
+
+    std::fs::remove_dir_all(home).unwrap();
+    let _ = std::fs::remove_dir_all(folder);
+}
+
+/// The bounded read of the Store's retained done rows, as the audit action
+/// answers it.
+fn audit_items(home: &Path) -> Vec<SdkValue> {
+    let audit = ok(
+        home,
+        "store.repair_mount_holders",
+        &[
+            ("name", t("shop")),
+            ("project", t("api")),
+            ("branch", t("main")),
+            ("action", t("audit")),
+        ],
+    );
+    match audit.get("items") {
+        Some(SdkValue::List(items)) => items.clone(),
+        other => panic!("audit items: {other:?}"),
+    }
+}
+
+/// `archive` exports the bounded retained done rows to
+/// `<home>/log/gc-audit.jsonl`; export is the default, and `prune` deletes
+/// exactly the exported rows. A live intent is not an exported row and stays.
+#[test]
+fn store_repair_archive_exports_and_prunes_only_the_done_pages() {
+    let (home, folder) = project();
+    let record = StoreRecord::read(&home, "shop").unwrap().unwrap();
+    let open = OpenArgs::of_record(&home, "shop", &record).unwrap();
+    let branch = branch_named(&open, "api", "main").unwrap();
+    let stack = with_service(&open, |service| {
+        Ok(lookup::project(&service.store, "api")?.id)
+    })
+    .unwrap();
+    for tag in [0x41u8, 0x42, 0x43, 0x44] {
+        let intent = GcIntent::shared(
+            [tag; 16],
+            GcIntentKind::Mount,
+            GcScopeKind::Branch,
+            branch.as_slice(),
+        )
+        .in_project(stack.as_slice())
+        .named(Some("api"), Some("main"));
+        with_service(&open, |service| {
+            service.store.history().gc_register(&intent).unwrap();
+            Ok(())
+        })
+        .unwrap();
+    }
+    // Three become the retained done audit; the fourth stays live.
+    for tag in [0x41u8, 0x42, 0x43] {
+        let evidence = format!(
+            "action=release;operator=tool;op={}",
+            format!("{tag:02x}").repeat(16)
+        );
+        with_service(&open, |service| {
+            assert!(service
+                .store
+                .history()
+                .gc_release_done(&[tag; 16], &evidence)
+                .unwrap());
+            Ok(())
+        })
+        .unwrap();
+    }
+    let archive = |prune: bool| {
+        let mut fields = vec![
+            ("name", t("shop")),
+            ("project", t("api")),
+            ("branch", t("main")),
+            ("action", t("archive")),
+            ("limit", SdkValue::Int(2)),
+        ];
+        if prune {
+            fields.push(("prune", SdkValue::Bool(true)));
+        }
+        ok(&home, "store.repair_mount_holders", &fields)
+    };
+
+    let exported = archive(false);
+    assert_eq!(exported.get_int("exported"), Some(3), "{exported:?}");
+    assert_eq!(exported.get_int("pruned"), Some(0), "{exported:?}");
+    let file = home.join("log/gc-audit.jsonl");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap().lines().count(),
+        3,
+        "the export wrote one line per done row"
+    );
+    assert_eq!(audit_items(&home).len(), 3, "export keeps the rows");
+
+    let pruned = archive(true);
+    assert_eq!(pruned.get_int("exported"), Some(3), "{pruned:?}");
+    assert_eq!(pruned.get_int("pruned"), Some(3), "{pruned:?}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap().lines().count(),
+        6,
+        "the second export appended the rows it pruned"
+    );
+    assert!(audit_items(&home).is_empty(), "the prune deleted them");
+    let live = with_service(&open, |service| {
+        Ok(service
+            .store
+            .history()
+            .gc_intents(GcScopeKind::Branch, branch.as_slice())
+            .unwrap()
+            .len())
+    })
+    .unwrap();
+    assert_eq!(live, 1, "the prune deleted no live intent");
+
+    std::fs::remove_dir_all(home).unwrap();
+    let _ = std::fs::remove_dir_all(folder);
 }

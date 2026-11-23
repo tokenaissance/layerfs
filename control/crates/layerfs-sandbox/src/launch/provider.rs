@@ -17,7 +17,7 @@ use std::{fmt, sync::Arc};
 pub struct ProviderCreate {
     /// Runtime launch; configuration is encoded from setup after validation.
     pub launch: LaunchRequest,
-    /// Explicit Normal daemon topology and Store selection.
+    /// Explicit Disposable daemon topology and Store selection.
     pub setup: DaemonSetup,
     /// Controller secret; never printed or sent in argv/environment.
     pub controller_private: [u8; 32],
@@ -63,7 +63,7 @@ impl fmt::Debug for ProviderFailure {
 }
 impl fmt::Display for ProviderFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "stopped {}: {}", self.phase.words(), self.cause)
+        write!(f, "Sandbox {:?}: {:?}", self.phase, self.cause)
     }
 }
 impl std::error::Error for ProviderFailure {}

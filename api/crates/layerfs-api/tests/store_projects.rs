@@ -2,11 +2,11 @@
 //! added through its writer lane, a taken name is refused before anything
 //! is written, a Store made by Init takes a second project, and a Store
 //! without the acquisition tables is refused before any scan.
+use layerfs_api::{projects, AddRequest, CreateRequest, InitError, InitRequest, ProjectApi};
 use layerfs_content::{
     file::FileView,
     filesystem::{FilesystemRead, FilesystemRootId, LogicalPath},
 };
-use layerfs_control::{projects, AddRequest, CreateRequest, InitError, InitRequest, ProjectApi};
 use layerfs_history::{
     error::{HolderKind, HolderState, NameSource},
     BranchId, HistoryCatalog, HistoryCatalogConfig, HistoryName, LayerStackId,
@@ -25,7 +25,7 @@ const BINDING: &[u8] = b"store-first-proof";
 const CURSOR: [u8; 32] = [41; 32];
 
 fn store(path: &Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 
 fn catalog() -> HistoryCatalogConfig {
@@ -49,7 +49,7 @@ fn add(
     source: PathBuf,
     name: &str,
     seed: u8,
-) -> Result<layerfs_control::AddedProject, InitError> {
+) -> Result<layerfs_api::AddedProject, InitError> {
     let request = AddRequest {
         source,
         store: store(path).into(),

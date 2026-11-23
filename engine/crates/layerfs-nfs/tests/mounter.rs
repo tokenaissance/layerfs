@@ -104,7 +104,6 @@ fn default_flush_commits_with_the_export_volume_and_refuses_without_it() {
             token,
             force: false,
             message: Some("first".into()),
-            expected: None,
         }))
         .unwrap()
         .reply
@@ -123,7 +122,6 @@ fn default_flush_commits_with_the_export_volume_and_refuses_without_it() {
         token,
         force: false,
         message: Some("second".into()),
-        expected: None,
     })) {
         Err(Failure::Kernel(failure)) => {
             assert_eq!(

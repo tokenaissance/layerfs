@@ -111,7 +111,7 @@ pub(crate) fn initialize(
     let result = (|| {
         if !request.store.sqlite_profile.permitted() {
             return Err(InitError::Manifest(
-                "explicit Normal Store profile required",
+                "explicit Normal or Disposable Store profile required",
             ));
         }
         check_destination(
@@ -185,8 +185,8 @@ pub(crate) fn initialize(
                 locator: request.locator.clone(),
                 profile: match request.store.sqlite_profile {
                     SqlitePersistenceProfile::Durable => StoreProfile::Durable,
-                    SqlitePersistenceProfile::Normal => {
-                        StoreProfile::Normal
+                    SqlitePersistenceProfile::Disposable | SqlitePersistenceProfile::Normal => {
+                        StoreProfile::Disposable
                     }
                 },
                 binding: request.catalog.binding_key.clone(),
@@ -228,7 +228,7 @@ impl ProjectApi {
         Self
     }
     /// Imports the complete supported host tree, publishes genesis/Branch and seals.
-    /// An explicit Normal profile is required before any Store creation.
+    /// An explicit Disposable profile is required before any Store creation.
     pub fn init(
         &self,
         request: InitRequest,

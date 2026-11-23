@@ -105,7 +105,7 @@ fn store_record(home: &Path, name: &str, machine: &str) {
             ("kind", t("sqlite")),
             ("binding", SdkValue::Bytes(vec![7; 16])),
             ("cursor", SdkValue::Bytes(vec![8; 32])),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
             ("machine", t(machine)),
         ]),
     )

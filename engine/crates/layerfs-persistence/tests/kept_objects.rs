@@ -93,7 +93,6 @@ fn commit(handles: &SqliteHandles, branch: BranchId, candidate_root: ObjectId) -
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap()
     {
@@ -138,7 +137,7 @@ fn request(op: u8) -> CompactRequest {
 fn reopen(store: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(store.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         b"doctor-adversarial",
         [71; 32],
     )

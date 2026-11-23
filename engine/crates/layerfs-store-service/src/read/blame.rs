@@ -323,7 +323,6 @@ pub fn blame(
                     crate::history::saved::reference(store, args::node(id)?)?,
                 ),
                 ("message", owner.get("message").cloned().unwrap_or_default()),
-                ("time", owner.get("time").cloned().unwrap_or_default()),
             ]),
             None => SdkValue::Null,
         };

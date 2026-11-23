@@ -1,6 +1,4 @@
-//! Namespace counts are path based, pinned and explicit about work
-//! exhaustion; `--at` takes a full id or a prefix. Each `project.stats`
-//! here asks for the long form (`detail`), which names the counted Commit.
+//! Namespace counts are path based, pinned and explicit about work exhaustion.
 use layerfs_bridge::control::SdkValue;
 use std::{
     os::unix::fs::{symlink, PermissionsExt},
@@ -15,31 +13,32 @@ fn folder(tag: &str) -> PathBuf {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     dir
 }
-fn args(method: &str, fields: &[(&str, SdkValue)]) -> SdkValue {
-    let mut fields: Vec<(String, SdkValue)> = fields
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.clone()))
-        .collect();
-    if method == "project.stats" {
-        fields.push(("detail".to_owned(), SdkValue::Bool(true)));
-    }
-    SdkValue::Map(fields)
-}
 fn call(home: &Path, method: &str, fields: &[(&str, SdkValue)]) -> SdkValue {
-    layerfs_api::call(Some(home), method, args(method, fields), &mut |_| {})
-        .unwrap_or_else(|r| panic!("{method}: {r:?}"))
+    layerfs_api::call(
+        Some(home),
+        method,
+        SdkValue::Map(
+            fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        ),
+        &mut |_| {},
+    )
+    .unwrap_or_else(|r| panic!("{method}: {r:?}"))
 }
-fn check_counts(value: &SdkValue, files: i64, dirs: i64, links: i64, size: i64) {
+fn check_counts(value: &SdkValue, files: i64, dirs: i64, links: i64, logical: i64) {
     for (key, n) in [
-        ("file_count", files),
-        ("dir_count", dirs),
-        ("symlink_count", links),
-        ("size", size),
+        ("files", files),
+        ("directories", dirs),
+        ("symlinks", links),
+        ("others", 0),
+        ("logical", logical),
     ] {
         assert_eq!(value.get_int(key), Some(n), "{key}: {value:?}");
     }
-    assert_eq!(value.get("partial"), Some(&SdkValue::Bool(false)));
-    assert_eq!(value.get_text("root").map(str::len), Some(64), "{value:?}");
+    assert_eq!(value.get("complete"), Some(&SdkValue::Bool(true)));
+    assert!(value.get("reason").is_none());
 }
 fn check(home: &Path, tag: &str) {
     let source = folder(&format!("source-{tag}"));
@@ -57,15 +56,16 @@ fn check(home: &Path, tag: &str) {
     );
     let stats = call(home, "project.stats", &[("project", t("trees/p"))]);
     check_counts(&stats, 2, 1, 1, 10);
-    let layer = stats.get_text("commit").unwrap().to_owned();
-    assert_eq!(layer.len(), 66, "the full id");
+    let pin = stats.get("at").unwrap();
+    assert_eq!(pin.get_text("kind"), Some("Layer"));
+    let layer = pin.get_text("id").unwrap().to_owned();
     call(
         home,
         "branch.fork",
         &[
             ("project", t("trees/p")),
             ("name", t("dev")),
-            ("from", t("main")),
+            ("from_branch", t("main")),
         ],
     );
     call(
@@ -84,8 +84,8 @@ fn check(home: &Path, tag: &str) {
         &[("project", t("trees/p")), ("branch", t("dev"))],
     );
     check_counts(&saved, 3, 1, 1, 13);
-    let commit = saved.get_text("commit").unwrap().to_owned();
-    assert_ne!(commit, layer);
+    assert_eq!(saved.get("at").unwrap().get_text("kind"), Some("Commit"));
+    let commit = saved.get("at").unwrap().get_text("id").unwrap().to_owned();
     call(
         home,
         "file.write",
@@ -102,62 +102,33 @@ fn check(home: &Path, tag: &str) {
         &[
             ("project", t("trees/p")),
             ("branch", t("dev")),
-            ("at", t(&commit)),
+            ("commit", t(&commit)),
         ],
     );
     assert_eq!(pinned, saved);
-    // a prefix of 8 or more characters names the same Commit
-    let prefixed = call(
-        home,
-        "project.stats",
-        &[
-            ("project", t("trees/p")),
-            ("branch", t("dev")),
-            ("at", t(&commit[..10])),
-        ],
-    );
-    assert_eq!(prefixed, saved);
-    let short = layerfs_api::call(
-        Some(home),
-        "project.stats",
-        args(
-            "project.stats",
-            &[("project", t("trees/p")), ("at", t(&commit[..6]))],
-        ),
-        &mut |_| {},
-    )
-    .unwrap_err();
-    assert_eq!(short.code, "InvalidInput", "{short:?}");
     let base = call(
         home,
         "project.stats",
         &[
             ("project", t("trees/p")),
             ("branch", t("main")),
-            ("at", t(&layer)),
+            ("commit", t(&layer)),
         ],
     );
     assert_eq!(base, stats);
     let bad = layerfs_api::call(
         Some(home),
         "project.stats",
-        args(
-            "project.stats",
-            &[
-                ("project", t("trees/p")),
-                ("branch", t("main")),
-                ("at", t(&commit)),
-            ],
-        ),
+        SdkValue::map([
+            ("project", t("trees/p")),
+            ("branch", t("main")),
+            ("commit", t(&commit)),
+        ]),
         &mut |_| {},
     )
     .unwrap_err();
-    assert_eq!(bad.code, "NotFound", "{bad:?}");
     assert!(
-        matches!(
-            bad.detail.get_text("code"),
-            Some("NoSuchCommit" | "NotInHistory")
-        ),
+        matches!(bad.code.as_str(), "NoSuchCommit" | "NotInHistory"),
         "{bad:?}"
     );
     let empty = folder(&format!("empty-{tag}"));
@@ -194,26 +165,12 @@ fn postgresql_counts_the_same_saved_tree_definition() {
         return;
     };
     let home = folder("pg-home");
-    // the URL's user becomes a saved login (a trust-auth server takes any
-    // password); the address is connected without it
-    let (scheme, rest) = url.split_once("://").unwrap();
-    let (user, address) = rest.split_once('@').unwrap();
-    call(
-        &home,
-        "store.save_auth",
-        &[
-            ("auth", t("pg")),
-            ("user", t(user)),
-            ("password", t("unused")),
-        ],
-    );
     call(
         &home,
         "store.connect",
         &[
-            ("store", t("trees")),
-            ("url", t(&format!("{scheme}://{address}"))),
-            ("auth", t("pg")),
+            ("name", t("trees")),
+            ("url", t(&url)),
             ("synchronous_commit", t("off")),
         ],
     );
@@ -221,7 +178,7 @@ fn postgresql_counts_the_same_saved_tree_definition() {
     std::fs::remove_dir_all(home).unwrap();
 }
 #[test]
-fn budget_exhaustion_returns_partial_counts() {
+fn budget_exhaustion_returns_partial_counts_with_a_reason() {
     let home = folder("budget-home");
     let source = folder("budget-source");
     for n in 0..10_001 {
@@ -237,9 +194,10 @@ fn budget_exhaustion_returns_partial_counts() {
         ],
     );
     let value = call(&home, "project.stats", &[("project", t("trees/large"))]);
-    assert_eq!(value.get_int("file_count"), Some(10_000));
-    assert_eq!(value.get("partial"), Some(&SdkValue::Bool(true)));
-    assert_eq!(value.get_int("size"), Some(0));
+    assert_eq!(value.get_int("files"), Some(10_000));
+    assert_eq!(value.get("complete"), Some(&SdkValue::Bool(false)));
+    assert!(value.get_text("reason").is_some());
+    assert_eq!(value.get_int("logical"), Some(0));
     layerfs_api::close_idle(std::time::Duration::ZERO);
     std::fs::remove_dir_all(home).unwrap();
     std::fs::remove_dir_all(source).unwrap();
@@ -263,29 +221,31 @@ fn hidden_paths_are_not_counted() {
         ],
     );
     let before = call(&home, "project.stats", &[("project", t("trees/p"))]);
-    assert_eq!(before.get_int("file_count"), Some(3), "{before:?}");
-    assert_eq!(before.get_int("dir_count"), Some(1), "{before:?}");
-    let logical = before.get_int("size").unwrap();
+    assert_eq!(before.get_int("files"), Some(3), "{before:?}");
+    assert_eq!(before.get_int("directories"), Some(1), "{before:?}");
+    let logical = before.get_int("logical").unwrap();
     call(
         &home,
-        "project.hide_path",
+        "project.remove_file",
         &[("project", t("trees/p")), ("path", t("/hide"))],
     );
     let after = call(&home, "project.stats", &[("project", t("trees/p"))]);
-    assert_eq!(after.get_int("file_count"), Some(2), "{after:?}");
-    assert_eq!(after.get_int("dir_count"), Some(1), "{after:?}");
-    // the size leaves the hidden file out too (R2 N8)
-    assert_eq!(after.get_int("size"), Some(logical - 3), "{after:?}");
+    assert_eq!(after.get_int("files"), Some(2), "{after:?}");
+    assert_eq!(after.get_int("directories"), Some(1), "{after:?}");
+    assert_eq!(
+        after.get_int("logical"),
+        Some(logical),
+        "the pinned publication's logical size is unchanged"
+    );
     // A removed directory hides its whole subtree.
     call(
         &home,
-        "project.hide_path",
+        "project.remove_file",
         &[("project", t("trees/p")), ("path", t("/sub"))],
     );
     let nested = call(&home, "project.stats", &[("project", t("trees/p"))]);
-    assert_eq!(nested.get_int("file_count"), Some(1), "{nested:?}");
-    assert_eq!(nested.get_int("dir_count"), Some(0), "{nested:?}");
-    assert_eq!(nested.get_int("size"), Some(2), "{nested:?}");
+    assert_eq!(nested.get_int("files"), Some(1), "{nested:?}");
+    assert_eq!(nested.get_int("directories"), Some(0), "{nested:?}");
     layerfs_api::close_idle(std::time::Duration::ZERO);
     std::fs::remove_dir_all(home).unwrap();
     std::fs::remove_dir_all(source).unwrap();

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 type Result<T> = std::result::Result<T, SdkRefusal>;
 
 /// The args-map keys that route a call and never reach the engine.
-pub const ROUTING: [&str; 8] = [
+pub const ROUTING: [&str; 9] = [
     "storePath",
     "sandbox",
     "deploy",
@@ -23,6 +23,7 @@ pub const ROUTING: [&str; 8] = [
     "postgresql",
     "store_record",
     "project_record",
+    "place_view",
 ];
 
 /// The Store a call opens and how. Each field is named for the frame field
@@ -56,60 +57,6 @@ pub struct PgSelection {
 }
 
 impl OpenArgs {
-    /// Store `store`'s file under `root` (a home, or a worker's own root),
-    /// with the Store record `store_record` the call was sent or read.
-    pub fn in_root(root: &Path, store: &str, store_record: Option<SdkValue>) -> Self {
-        Self {
-            home: Some(root.to_path_buf()),
-            store: Some(store.to_owned()),
-            store_path: Some(paths::store_file(root, store).display().to_string()),
-            store_record,
-            ..Self::default()
-        }
-    }
-
-    /// Store `store` of `home` as its record `record` places it: a sqlite
-    /// Store's file ([`in_root`](Self::in_root)), or a PostgreSQL Store's
-    /// key dialled with its saved login
-    /// ([`selection`](crate::postgresql::connect::selection)).
-    pub fn of_record(home: &Path, store: &str, record: &StoreRecord) -> Result<Self> {
-        let fields = Some(record.to_record().clone());
-        match record.store_ref()? {
-            StoreRef::Sqlite { .. } => Ok(Self::in_root(home, store, fields)),
-            StoreRef::Postgres { .. } => {
-                let postgresql = crate::postgresql::connect::selection(record)?;
-                Ok(Self::dialled(home, store, record, postgresql))
-            }
-        }
-    }
-
-    /// PostgreSQL Store `store` of `home`, at the key its record `record`
-    /// gives it, dialled with `postgresql`.
-    pub fn dialled(
-        home: &Path,
-        store: &str,
-        record: &StoreRecord,
-        postgresql: PgSelection,
-    ) -> Self {
-        let key = record.postgresql_key(home, store);
-        Self {
-            home: Some(home.to_path_buf()),
-            store: Some(store.to_owned()),
-            store_path: Some(key.display().to_string()),
-            store_record: Some(record.to_record().clone()),
-            postgresql: Some(postgresql),
-            ..Self::default()
-        }
-    }
-
-    /// These arguments for a call on project `project`.
-    pub fn with_project(self, project: &str) -> Self {
-        Self {
-            project: Some(project.to_owned()),
-            ..self
-        }
-    }
-
     /// The Store file a call names (`storePath`).
     pub fn store_path(&self) -> Result<PathBuf> {
         match self.store_path.as_deref() {
@@ -119,6 +66,33 @@ impl OpenArgs {
                 "a Store call needs storePath, the Store volume's Store file",
             )),
         }
+    }
+
+    /// The open arguments for Store `store` in `home`, read from its record:
+    /// the Store file or key, the record and a PostgreSQL server.
+    pub fn of_record(home: &Path, store: &str, record: &StoreRecord) -> Result<Self> {
+        let store_ref = record.store_ref()?;
+        let (store_path, postgresql) = match store_ref {
+            StoreRef::Sqlite { .. } => (
+                paths::store_file(home, store).display().to_string(),
+                None,
+            ),
+            StoreRef::Postgres { .. } => (
+                record.postgresql_key(home, store).display().to_string(),
+                Some(PgSelection {
+                    url: Some(crate::record::url(record)?),
+                    ..PgSelection::default()
+                }),
+            ),
+        };
+        Ok(Self {
+            home: Some(home.to_path_buf()),
+            store: Some(store.to_owned()),
+            project: None,
+            store_path: Some(store_path),
+            store_record: Some(record.to_record().clone()),
+            postgresql,
+        })
     }
 }
 

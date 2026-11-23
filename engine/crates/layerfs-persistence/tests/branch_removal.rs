@@ -18,7 +18,7 @@ const BINDING: &[u8] = b"branch-removal";
 const CURSOR: [u8; 32] = [37; 32];
 
 fn config(path: &std::path::Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 
 fn catalog(temp: &Temp) -> layerfs_persistence::HistoryProvider {
@@ -85,7 +85,6 @@ fn a_removed_branch_is_hidden_and_the_epoch_bumps_once() {
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap();
     let CommitOutcome::Committed { record, .. } = outcome else {
@@ -275,7 +274,6 @@ fn a_live_commit_source_still_forks() {
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap();
     let CommitOutcome::Committed { record, .. } = outcome else {

@@ -34,22 +34,7 @@ fn usage_error_refusal_and_success_have_their_own_codes() {
     let (c, out, err) = code(&home, &["store", "get", "nope"]);
     assert_eq!(c, Some(125));
     assert!(out.is_empty(), "{out}");
-    // one line: `error`, one of the public codes, then the message
-    assert_eq!(
-        err,
-        "{\"error\":\"NotFound\",\"message\":\"no Store named nope\"}\n"
-    );
-    // the long form adds `fix` and `detail`, null when there is none
-    let (c, _, err) = code(&home, &["store", "get", "nope", "--detail"]);
-    assert_eq!(c, Some(125));
-    assert!(err.ends_with("\"fix\":null,\"detail\":null}\n"), "{err}");
-    // a code the library raises under its own name leaves under its public
-    // one; the long form keeps the raised one
-    let words = ["file", "read", "nope/p", "main", "/a", "--detail"];
-    let (c, _, err) = code(&home, &words);
-    assert_eq!(c, Some(125));
-    assert!(err.starts_with(r#"{"error":"NotFound","#), "{err}");
-    assert!(err.contains(r#""detail":{"code":"NoSuchStore"}"#), "{err}");
+    assert!(err.starts_with(r#"{"code":"NotFound""#), "{err}");
     std::fs::remove_dir_all(home).unwrap();
 }
 
@@ -57,20 +42,17 @@ fn usage_error_refusal_and_success_have_their_own_codes() {
 fn doctor_help_is_help_and_help_exits_0() {
     let home = tempdir("doctor-help");
     for words in [
-        &["home", "doctor", "--help"][..],
-        &["home", "doctor", "-h"],
-        &["help", "home", "doctor"],
+        &["doctor", "--help"][..],
+        &["doctor", "-h"],
+        &["help", "doctor"],
     ] {
         let (c, out, err) = code(&home, words);
         assert_eq!(c, Some(0), "{words:?}: {err}");
-        assert!(
-            out.starts_with("layerfs home doctor [--progress]\n"),
-            "{out}"
-        );
+        assert!(out.starts_with("layerfs doctor [--text]\n"), "{out}");
         assert!(err.is_empty(), "{err}");
     }
     // a flag it does not take is still a wrong command line
-    assert_eq!(code(&home, &["home", "doctor", "--all"]).0, Some(2));
+    assert_eq!(code(&home, &["doctor", "--all"]).0, Some(2));
     assert!(!home.join("store").exists(), "help made no home");
     let (c, out, _) = code(&home, &["--version"]);
     assert_eq!(c, Some(0));
@@ -99,7 +81,7 @@ fn stdin_and_from_feed_the_content_and_json_positionals() {
     // valid JSON on stdin is read and the call made: refused, no such Store
     let out = run_with_stdin(&mut layerfs(&home, &call), json);
     assert_eq!(out.status.code(), Some(125), "{}", text(&out.stderr));
-    assert!(text(&out.stderr).contains("no Store named s"));
+    assert!(text(&out.stderr).contains("NoSuchStore"));
     // JSON that is not JSON, or not UTF-8, is a wrong command line
     let out = run_with_stdin(&mut layerfs(&home, &call), b"{x");
     assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
@@ -118,7 +100,7 @@ fn stdin_and_from_feed_the_content_and_json_positionals() {
         b"{x",
     );
     assert_eq!(out.status.code(), Some(125), "{}", text(&out.stderr));
-    assert!(text(&out.stderr).contains("no Store named s"));
+    assert!(text(&out.stderr).contains("NoSuchStore"));
     // a file that cannot be read is a wrong command line
     let missing = home.join("missing.json");
     let words = [&call[..], &["--from", missing.to_str().unwrap()]].concat();
@@ -135,39 +117,7 @@ fn binary_stdin_is_content_and_never_a_usage_error() {
     for bytes in [&b"\xff\xfe\x00z"[..], b"", b"plain\n"] {
         let out = run_with_stdin(&mut layerfs(&home, &call), bytes);
         assert_eq!(out.status.code(), Some(125), "{bytes:?}: {:?}", out.stderr);
-        assert!(text(&out.stderr).contains("no Store named s"), "{bytes:?}");
-    }
-    std::fs::remove_dir_all(home).unwrap();
-}
-
-/// `--with` may be given more than once and its sections add up; any other
-/// option given twice is a usage error (exit 2) naming it, never the
-/// library's `unknown argument` (RF re-check N-F).
-#[test]
-fn a_repeated_option_is_a_usage_error_except_with() {
-    let home = tempdir("repeat");
-    assert_eq!(code(&home, &["home", "init"]).0, Some(0));
-    let (c, out, err) = code(
-        &home,
-        &["home", "get", "--with", "tree", "--with", "platforms"],
-    );
-    assert_eq!(c, Some(0), "{err}");
-    assert!(
-        out.contains("\"tree\":") && out.contains("\"platforms\":"),
-        "{out}"
-    );
-    for (words, flag) in [
-        (&["store", "list", "--detail", "--detail"][..], "--detail"),
-        (&["home", "log", "--limit", "1", "--limit", "2"], "--limit"),
-        (&["store", "list", "--text", "--text"], "--text"),
-    ] {
-        let (c, out, err) = code(&home, words);
-        assert_eq!(c, Some(2), "{words:?}: {err}");
-        assert!(out.is_empty(), "{out}");
-        assert!(
-            err.contains(&format!("{flag} is given more than once")),
-            "{words:?}: {err}"
-        );
+        assert!(text(&out.stderr).contains("NoSuchStore"), "{bytes:?}");
     }
     std::fs::remove_dir_all(home).unwrap();
 }

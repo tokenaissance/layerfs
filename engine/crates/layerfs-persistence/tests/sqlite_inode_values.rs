@@ -20,7 +20,7 @@ use support::Temp;
 
 const BINDING: &[u8] = b"inode-values";
 fn config(path: &std::path::Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 fn create(path: &std::path::Path) -> SqliteHandles {
     SqliteHandles::create(
@@ -368,7 +368,7 @@ fn a_store_of_the_value_group_format_is_refused_at_open() {
         .unwrap()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 36);
+    assert_eq!(version, 39);
     SqliteHandles::open_writable(config(&path), BINDING, [73; 32]).unwrap();
 }
 

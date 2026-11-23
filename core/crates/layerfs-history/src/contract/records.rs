@@ -6,6 +6,7 @@
 //! the same inputs produce the same operation from a direct test client, a
 //! service thread or a future Workspace.
 
+use super::authority::PlaceAuthority;
 use crate::error::{HistoryError, HistoryResult};
 use crate::identity::{BranchId, CommitId, HistoryName, LayerId, LayerStackId, NodeId};
 use layerfs_content::ObjectId;
@@ -338,11 +339,6 @@ pub struct CommitRequest {
     pub meta: CommitMeta,
     /// Overwrite a head that moved instead of refusing.
     pub force: bool,
-    /// The node the Branch must answer as its head (its head Commit, else
-    /// its base Layer) when the transaction publishes, whatever `force`
-    /// says; another head is refused `HeadMoved`. `None` checks only
-    /// `expected_head` and `force`.
-    pub required_head: Option<NodeId>,
 }
 
 /// One side of a Branch merge.
@@ -402,7 +398,7 @@ pub struct AddLayerRequest {
     pub stack: LayerStackId,
     /// Branch that published the Commit.
     pub branch: BranchId,
-    /// Selected source Commit: the Branch's head or one its head holds.
+    /// Selected source Commit.
     pub commit: CommitId,
     /// Stack head the caller expects.
     pub expected_stack_head: LayerId,
@@ -781,6 +777,14 @@ pub struct GcIntent {
     pub owner_boot: Option<String>,
     /// Operation phase, for a holder report.
     pub phase: Option<String>,
+    /// The machine or worker generation that placed the intent, when known.
+    pub machine_incarnation: Option<String>,
+    /// The Sandbox generation that placed it, when known.
+    pub sandbox_generation: Option<String>,
+    /// Lease deadline in Unix milliseconds; absent means no lease.
+    pub lease_expires_ms: Option<i64>,
+    /// Fencing token a newer owner replaces.
+    pub fence_token: Option<String>,
     /// True when the owner is uncertain and only `Unresolved` may report it.
     pub uncertain: bool,
 }
@@ -828,6 +832,10 @@ impl GcIntent {
             owner_runtime: None,
             owner_boot: None,
             phase: None,
+            machine_incarnation: None,
+            sandbox_generation: None,
+            lease_expires_ms: None,
+            fence_token: None,
             uncertain: false,
         }
     }
@@ -876,6 +884,37 @@ impl GcIntent {
         self
     }
 
+    /// Records the place and lease authority the intent carries.
+    #[must_use]
+    pub fn authorized(mut self, authority: PlaceAuthority) -> Self {
+        self.machine_incarnation = authority.machine_incarnation;
+        self.sandbox_generation = authority.sandbox_generation;
+        self.lease_expires_ms = authority.lease_expires_ms;
+        self.fence_token = authority.fence_token;
+        self
+    }
+
+    /// The place and lease authority this intent carries, for the Store-side
+    /// admission that classifies it.
+    #[must_use]
+    pub fn authority(&self) -> PlaceAuthority {
+        PlaceAuthority {
+            machine_incarnation: self.machine_incarnation.clone(),
+            sandbox_generation: self.sandbox_generation.clone(),
+            lease_expires_ms: self.lease_expires_ms,
+            fence_token: self.fence_token.clone(),
+        }
+    }
+
+    /// Records a renewed lease deadline and its fencing token; `None` clears
+    /// the value it names.
+    #[must_use]
+    pub fn renewed(mut self, lease_expires_ms: Option<i64>, fence_token: Option<&str>) -> Self {
+        self.lease_expires_ms = lease_expires_ms;
+        self.fence_token = fence_token.map(str::to_owned);
+        self
+    }
+
     /// Marks the owner uncertain: only `Unresolved` may report it.
     #[must_use]
     pub fn uncertain(mut self) -> Self {
@@ -883,6 +922,51 @@ impl GcIntent {
         self
     }
 }
+
+/// One retained `done` admission row, the operator audit of a settle or
+/// release. The owner columns are cleared when the row is retained, so it
+/// never blocks a later mount; admission queries filter `state <> 'done'`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GcIntentDone {
+    /// 16-byte operation identity.
+    pub op_id: [u8; 16],
+    /// Operation kind.
+    pub kind: GcIntentKind,
+    /// Scope the operation was admitted at.
+    pub scope_kind: GcScopeKind,
+    /// Typed scope identity.
+    pub scope_id: Vec<u8>,
+    /// Project name, when recorded.
+    pub project: Option<String>,
+    /// Branch name, when recorded.
+    pub branch: Option<String>,
+    /// Machine name, when recorded.
+    pub machine: Option<String>,
+    /// Sandbox name, when recorded.
+    pub sandbox: Option<String>,
+    /// Operation phase the action left.
+    pub phase: Option<String>,
+    /// The operator action, operator and operation the release recorded.
+    pub evidence: Option<String>,
+    /// When the row was retained, in Unix milliseconds.
+    pub updated_ms: i64,
+}
+
+/// One bounded page of the retained `done` audit, oldest first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GcAuditPage {
+    /// The retained rows on this page.
+    pub items: Vec<GcIntentDone>,
+    /// The zero-based page number that was read.
+    pub page: u32,
+    /// The page size that was read (the caller's, clamped to the maximum).
+    pub limit: u32,
+    /// True when another page may follow this one.
+    pub has_more: bool,
+}
+
+/// The largest page one audit read returns, whatever the caller asks for.
+pub const MAXIMUM_AUDIT_PAGE: u32 = 1000;
 
 /// The outcome of the Store side of `project.delete`: a marker already there,
 /// a marker written now, or neither a live stack nor a marker.
@@ -911,4 +995,20 @@ impl GcDeletion {
             Self::Absent => requested,
         }
     }
+}
+
+/// What one worker-start reconcile did at one Store: the machine authority it
+/// recorded, the intents it settled, and the owners it kept.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GcReconcile {
+    /// The machine whose authority was recorded.
+    pub machine: String,
+    /// The incarnation the Store now attributes to it.
+    pub incarnation: String,
+    /// The operation ids of the intents settled, in the order they were found.
+    pub settled: Vec<[u8; 16]>,
+    /// Intents kept because their place is live or their owner is uncertain.
+    pub held: u64,
+    /// The kept intents whose owner is uncertain (a subset of `held`).
+    pub uncertain: u64,
 }

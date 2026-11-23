@@ -35,10 +35,10 @@ fn ok(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> SdkValue {
     call(home, name, args).unwrap_or_else(|e| panic!("{name}: {e:?}"))
 }
 
-/// A connected bucket whose endpoint answers nothing; its key's secret is
-/// in the home's secret folder.
+/// A connected bucket whose endpoint answers nothing.
 fn dead_bucket(home: &Path) {
-    layerfs_store::backup::secret::write(home, "dead", "secret").unwrap();
+    std::env::set_var("LAYERFS_TEST_DEAD_ACCESS_KEY", "user");
+    std::env::set_var("LAYERFS_TEST_DEAD_SECRET_KEY", "secret");
     write_record(
         &paths::bucket_record(home, "dead"),
         &SdkValue::map([
@@ -48,7 +48,8 @@ fn dead_bucket(home: &Path) {
             ("bucket", t("nothing")),
             ("prefix", t("")),
             ("region", t("us-east-1")),
-            ("access_key", t("user")),
+            ("key", t("env:LAYERFS_TEST_DEAD")),
+            ("part_size", SdkValue::Int(64 << 20)),
         ]),
     )
     .unwrap();
@@ -96,11 +97,7 @@ fn restore_over_a_store_with_a_running_sandbox_is_in_use() {
     let refused = call(
         &home,
         "backup.restore",
-        &[
-            ("bucket", t("dead")),
-            ("file", t("shop")),
-            ("store", t("shop")),
-        ],
+        &[("store", t("shop")), ("bucket", t("dead"))],
     )
     .unwrap_err();
     assert_eq!(refused.0, "InUse", "{refused:?}");
@@ -113,22 +110,11 @@ fn restore_over_a_store_with_a_running_sandbox_is_in_use() {
     let failed = call(
         &home,
         "backup.restore",
-        &[
-            ("bucket", t("dead")),
-            ("file", t("shop")),
-            ("store", t("shop")),
-        ],
+        &[("store", t("shop")), ("bucket", t("dead"))],
     )
     .unwrap_err();
     assert_ne!(failed.0, "InUse", "{failed:?}");
     assert!(paths::project_record(&home, "shop", "api").is_file());
-    // the replace was the Store's `op` while it ran; its certain failure
-    // dropped it and left what was tried on the link
-    let record = read_record(&path).unwrap().unwrap();
-    assert!(record.get("op").is_none(), "{record:?}");
-    let attempt = record.get("backups").unwrap().get("dead").unwrap();
-    let attempt = attempt.get("attempt").expect("an attempt");
-    assert_eq!(attempt.get_text("call"), Some("restore"));
     // the failed download left no staging folder behind
     let hidden: Vec<_> = std::fs::read_dir(home.join("store"))
         .unwrap()
@@ -158,11 +144,7 @@ fn restore_refuses_a_store_folder_that_is_not_private() {
         call(
             &home,
             "backup.restore",
-            &[
-                ("bucket", t("dead")),
-                ("file", t("open-dir")),
-                ("store", t("open-dir")),
-            ],
+            &[("store", t("open-dir")), ("bucket", t("dead"))],
         )
         .unwrap_err()
     };
@@ -294,11 +276,7 @@ fn the_next_restore_removes_a_killed_restores_folder() {
     let failed = call(
         &home,
         "backup.restore",
-        &[
-            ("bucket", t("dead")),
-            ("file", t("fresh")),
-            ("store", t("fresh")),
-        ],
+        &[("store", t("fresh")), ("bucket", t("dead"))],
     )
     .unwrap_err();
     assert_ne!(failed.0, "Exists", "{failed:?}");
@@ -362,105 +340,5 @@ fn a_second_create_of_a_store_is_busy() {
     )
     .unwrap_err();
     assert_ne!(next.0, "Busy", "{next:?}");
-    // the backup was the Store's `op`; its failure dropped it and wrote
-    // what was tried to the link's `attempt`, which store.get reads
-    let record = read_record(&paths::store_record(&home, "shop"))
-        .unwrap()
-        .unwrap();
-    assert!(record.get("op").is_none(), "{record:?}");
-    let got = layerfs_api::call(
-        Some(&home),
-        "store.get",
-        SdkValue::map([("store", t("shop")), ("detail", SdkValue::Bool(true))]),
-        &mut |_| {},
-    )
-    .unwrap();
-    let Some(SdkValue::List(rows)) = got.get("backups") else {
-        panic!("{got:?}")
-    };
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_text("bucket"), Some("dead"));
-    assert_eq!(rows[0].get("last"), Some(&SdkValue::Null));
-    let attempt = rows[0].get("attempt").unwrap();
-    assert_eq!(attempt.get_text("call"), Some("create"));
-    assert!(attempt
-        .get_text("ended_at")
-        .is_some_and(|at| at.ends_with('Z')));
     let _ = std::fs::remove_dir_all(home);
-}
-
-/// A bucket whose record cannot be read (conformance R1 N10) is named in
-/// `not_listed` with `reason: refused` (it was not asked; `lost` is only for
-/// a request that got no answer, RF re-check N-E); it does not fail the
-/// listing of the others.
-#[test]
-fn an_unreadable_bucket_record_is_not_listed() {
-    let home = tempdir("unreadable-record");
-    home::open(&home).unwrap();
-    let record = paths::bucket_record(&home, "broken");
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(&record, b"{ not json").unwrap();
-    let listed = ok(&home, "backup.list", &[]);
-    let skipped = match listed.get("not_listed") {
-        Some(SdkValue::List(rows)) => rows.clone(),
-        other => panic!("not_listed: {other:?}"),
-    };
-    assert_eq!(skipped.len(), 1, "{listed:?}");
-    assert_eq!(skipped[0].get_text("bucket"), Some("broken"));
-    assert_eq!(skipped[0].get_text("reason"), Some("refused"));
-    let message = skipped[0].get_text("message").unwrap_or_default();
-    assert!(
-        message.starts_with("the record of bucket broken could not be read: "),
-        "{message}"
-    );
-    std::fs::remove_dir_all(home).unwrap();
-}
-
-/// A bucket whose key has no saved secret: `backup create` and `backup
-/// restore` are refused before any request with the connect-again line
-/// as their fix (V21-4, RC-A F4).
-#[test]
-fn create_and_restore_without_a_saved_secret_carry_the_connect_again_fix() {
-    let home = tempdir("no-secret");
-    home::open(&home).unwrap();
-    ok(&home, "store.create", &[("name", t("shop"))]);
-    write_record(
-        &paths::bucket_record(&home, "nokey"),
-        &SdkValue::map([
-            ("name", t("nokey")),
-            ("provider", t("minio")),
-            ("endpoint", t("http://127.0.0.1:9")),
-            ("bucket", t("nothing")),
-            ("prefix", t("pre")),
-            ("region", t("us-east-1")),
-            ("access_key", t("user")),
-        ]),
-    )
-    .unwrap();
-    let fix = "layerfs backup connect nokey http://127.0.0.1:9/nothing/pre --access-key <key> \
-               --key-stdin";
-    let refused = |name: &str, args: &[(&str, SdkValue)]| {
-        let args = SdkValue::Map(
-            args.iter()
-                .map(|(n, v)| ((*n).to_owned(), v.clone()))
-                .collect(),
-        );
-        layerfs_api::call(Some(&home), name, args, &mut |_| {}).unwrap_err()
-    };
-    let created = refused(
-        "backup.create",
-        &[("store", t("shop")), ("bucket", t("nokey"))],
-    );
-    assert_eq!(created.detail.get_text("fix"), Some(fix), "{created:?}");
-    let restored = refused(
-        "backup.restore",
-        &[
-            ("bucket", t("nokey")),
-            ("file", t("shop")),
-            ("store", t("copy")),
-        ],
-    );
-    assert_eq!(restored.detail.get_text("fix"), Some(fix), "{restored:?}");
-    assert_eq!(created.code, restored.code);
-    std::fs::remove_dir_all(&home).unwrap();
 }

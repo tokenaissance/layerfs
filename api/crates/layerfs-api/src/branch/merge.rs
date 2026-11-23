@@ -1,69 +1,36 @@
-//! `branch.merge`: merge one Branch into another, or into a new Branch.
-use crate::calls::scope::Rule;
+//! `branch.merge`: merge two Branches into a new one.
 use crate::calls::table::Kind::{Json, Name, Project};
 use crate::calls::table::{a, call, opt, Call, MESSAGE};
-use crate::calls::{Context, Form, Policy};
+use crate::calls::Context;
 use layerfs_bridge::control::SdkValue;
 use layerfs_home::outcome::Outcome;
 use layerfs_store::calls::branch::{merge, BranchMerge};
-
-/// `parent` and `second_parent` are the two heads merged; `overwritten`
-/// lists the paths a newer-write-wins rule decided.
-const FORM: Form = Form::of(
-    &["commit"],
-    &[
-        "unchanged",
-        "fast_forward",
-        "overwritten",
-        "overwritten_count",
-    ],
-    &[
-        "commit",
-        "unchanged",
-        "fast_forward",
-        "overwritten",
-        "overwritten_count",
-        "outcome",
-        "branch",
-        "parent",
-        "second_parent",
-        "merge_base",
-        "root",
-        "units",
-        "units_count",
-    ],
-);
 
 /// Its table entry.
 pub(crate) const CALL: Call = call(
     "branch",
     "merge",
-    &[a("project", Project), a("branch", Name), a("from", Name)],
     &[
-        opt("into", Name),
-        opt("units", Json).redact(),
-        opt("expected", Name),
-        MESSAGE,
+        a("project", Project),
+        a("name", Name),
+        a("a", Name),
+        a("b", Name),
     ],
-    "merge one Branch into another, or into a new Branch",
+    &[MESSAGE, opt("units", Json)],
+    "merge two Branches into a new one",
     run,
-)
-.scoped(Rule::BranchMerge)
-.policy(Policy::Project("project"))
-.saves()
-.form(&FORM);
+);
 
 /// Runs `branch.merge`.
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
     let text = |name: &str| args.get_text(name).map(str::to_owned);
     let request = BranchMerge {
         project: text("project").unwrap_or_default(),
-        branch: text("branch").unwrap_or_default(),
-        from: text("from").unwrap_or_default(),
-        into: text("into"),
-        units: args.get("units").cloned(),
-        expected: text("expected"),
+        name: text("name").unwrap_or_default(),
+        a: text("a").unwrap_or_default(),
+        b: text("b").unwrap_or_default(),
         message: text("message"),
+        units: args.get("units").cloned(),
     };
     let (home, events) = context.parts();
     merge(home, events, &request)

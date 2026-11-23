@@ -18,7 +18,7 @@ const BINDING: &[u8] = b"idle-checkpoint";
 const CURSOR: [u8; 32] = [86; 32];
 
 fn config(path: &Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 
 fn create(path: &Path) -> SqliteHandles {

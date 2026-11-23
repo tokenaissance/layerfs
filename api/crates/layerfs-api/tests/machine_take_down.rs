@@ -26,10 +26,9 @@ fn t(s: &str) -> SdkValue {
 }
 
 fn call(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> Result<SdkValue, (String, String)> {
-    let detail = ("detail".to_owned(), SdkValue::Bool(true));
     let args = SdkValue::Map(
-        (args.iter().map(|(n, v)| ((*n).to_owned(), v.clone())))
-            .chain([detail])
+        args.iter()
+            .map(|(n, v)| ((*n).to_owned(), v.clone()))
             .collect(),
     );
     layerfs_api::call(Some(home), name, args, &mut |_| {}).map_err(|r| (r.code, r.message))
@@ -39,8 +38,6 @@ fn lima(home: &Path, name: &str, more: &[(&str, SdkValue)]) {
     let mut fields = vec![
         ("name".to_owned(), t(name)),
         ("platform".to_owned(), t("lima")),
-        // every 2.0 create records its VM's name
-        ("vm_name".to_owned(), t(&format!("layerfs-test-{name}"))),
     ];
     fields.extend(more.iter().map(|(n, v)| ((*n).to_owned(), v.clone())));
     write_record(&paths::machine_record(home, name), &SdkValue::Map(fields)).unwrap();
@@ -71,7 +68,7 @@ fn a_running_sandbox_keeps_its_machine_s_settings() {
     let (code, message) = call(
         &home,
         "machine.update",
-        &[("machine", t("docker")), ("image", t("sha256:abc"))],
+        &[("name", t("docker")), ("image", t("sha256:abc"))],
     )
     .unwrap_err();
     assert_eq!(code, "InUse", "{message}");
@@ -80,7 +77,7 @@ fn a_running_sandbox_keeps_its_machine_s_settings() {
     call(
         &home,
         "machine.update",
-        &[("machine", t("docker")), ("image", t("sha256:abc"))],
+        &[("name", t("docker")), ("image", t("sha256:abc"))],
     )
     .unwrap();
     std::fs::remove_dir_all(home).unwrap();
@@ -108,12 +105,12 @@ fn a_machine_being_removed_is_used_by_no_call() {
     let me = i64::from(std::process::id());
     lima(&home, "dev", &[("op", op("machine.remove", me, false))]);
     for (name, args) in [
-        ("machine.remove", vec![("machine", t("dev"))]),
+        ("machine.remove", vec![("name", t("dev"))]),
         (
             "machine.update",
-            vec![("machine", t("dev")), ("image", t("/x.tar"))],
+            vec![("name", t("dev")), ("image", t("/x.tar"))],
         ),
-        ("machine.start", vec![("machine", t("dev"))]),
+        ("machine.start", vec![("name", t("dev"))]),
     ] {
         let (code, message) = call(&home, name, &args).unwrap_err();
         assert_eq!(code, "Busy", "{name}: {message}");
@@ -122,12 +119,12 @@ fn a_machine_being_removed_is_used_by_no_call() {
     let refused = layerfs_api::running(&home, "dev").unwrap_err();
     assert_eq!(refused.code, "Busy", "{}", refused.message);
     // a read answers, probing nothing
-    let got = call(&home, "machine.get", &[("machine", t("dev"))]).unwrap();
-    assert_eq!(got.get_text("state"), Some("busy"), "{got:?}");
-    let shown = got.get("op").expect("get shows the op");
-    assert_eq!(shown.get_text("name"), Some("remove"));
-    assert_eq!(shown.get_text("phase"), Some("delete"));
-    assert_eq!(shown.get_text("started_at"), Some("1970-01-01T00:00:00Z"));
+    let got = call(&home, "machine.get", &[("name", t("dev"))]).unwrap();
+    assert_eq!(got.get_text("state"), Some("removing"), "{got:?}");
+    let status = call(&home, "machine.status", &[("name", t("dev"))]).unwrap();
+    assert_eq!(status.get_text("state"), Some("removing"), "{status:?}");
+    let shown = status.get("op").expect("status shows the op");
+    assert_eq!(shown.get_text("name"), Some("machine.remove"));
     assert!(shown.get("owner").is_none(), "{shown:?}");
     // a remover that is gone after a certain outcome holds nothing
     lima(
@@ -138,7 +135,7 @@ fn a_machine_being_removed_is_used_by_no_call() {
     call(
         &home,
         "machine.update",
-        &[("machine", t("dev")), ("image", t("/x.tar"))],
+        &[("name", t("dev")), ("image", t("/x.tar"))],
     )
     .unwrap();
     std::fs::remove_dir_all(home).unwrap();
@@ -157,27 +154,29 @@ fn a_gone_owner_s_unknown_outcome_is_unresolved_until_removed() {
     let (code, message) = call(
         &home,
         "machine.update",
-        &[("machine", t("dev")), ("image", t("/x.tar"))],
+        &[("name", t("dev")), ("image", t("/x.tar"))],
     )
     .unwrap_err();
     assert_eq!(code, "Unresolved", "{message}");
-    assert!(message.contains("`layerfs machine get dev`"), "{message}");
+    assert!(
+        message.contains("`layerfs machine status dev`"),
+        "{message}"
+    );
     assert!(
         message.contains("`layerfs machine remove dev`"),
         "{message}"
     );
-    let got = call(&home, "machine.get", &[("machine", t("dev"))]).unwrap();
-    assert_eq!(got.get_text("state"), Some("broken"), "{got:?}");
-    assert_eq!(got.get_text("reason"), Some("unresolved"), "{got:?}");
-    assert_eq!(got.get_text("fix"), Some("layerfs machine remove dev"));
-    assert_eq!(
-        got.get_text("message"),
-        Some("the outcome of its create (phase delete) is not known: lost the reply"),
-        "{got:?}"
-    );
+    let status = call(&home, "machine.status", &[("name", t("dev"))]).unwrap();
+    assert_eq!(status.get_text("state"), Some("unresolved"), "{status:?}");
+    let shown = status.get("op").expect("status shows the op");
+    assert_eq!(shown.get_text("name"), Some("machine.create"));
+    assert_eq!(shown.get("uncertain"), Some(&SdkValue::Bool(true)));
+    let got = call(&home, "machine.get", &[("name", t("dev"))]).unwrap();
+    assert_eq!(got.get_text("state"), Some("unresolved"), "{got:?}");
+    assert_eq!(got.get_text("error"), Some("lost the reply"), "{got:?}");
     // the remove that clears it is not refused for it: it deletes, or its
     // delete is refused and the record stays as it was
-    match call(&home, "machine.remove", &[("machine", t("dev"))]) {
+    match call(&home, "machine.remove", &[("name", t("dev"))]) {
         Err((code, message)) => {
             assert!(
                 !["Unresolved", "Busy"].contains(&code.as_str()),
@@ -215,7 +214,7 @@ fn a_remove_waits_for_the_start_lock_and_restores_a_refused_record() {
         nix::fcntl::flock(lock.as_raw_fd(), nix::fcntl::FlockArg::Unlock).unwrap();
     });
     let started = Instant::now();
-    let removed = call(&home, "machine.remove", &[("machine", t("dev"))]);
+    let removed = call(&home, "machine.remove", &[("name", t("dev"))]);
     assert!(
         started.elapsed() >= Duration::from_millis(600),
         "the remove waited for the start lock"

@@ -102,9 +102,6 @@ impl BoundWorkspace {
                 }
                 admission.released =
                     failure.locally_settled && held.as_ref().is_none_or(|held| !held.retained());
-                if !admission.released {
-                    self.retain(&failure, held.as_ref());
-                }
                 failure.namespace = held;
                 Err(failure)
             }
@@ -242,7 +239,7 @@ impl BoundWorkspace {
     /// sequence; what it did not release stays named in the receipt. A done
     /// release's receipt is dropped at once. Neither release drains the
     /// reclamation it readies: that follows the answer (`reclaim`).
-    pub(super) fn release_captured(&self, held: &mut CapturedConstruction) {
+    fn release_captured(&self, held: &mut CapturedConstruction) {
         held.custody = None;
         if let Some(reader) = held.reader {
             if !self.released(

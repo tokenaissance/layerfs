@@ -12,11 +12,11 @@ impl WorkspaceApi<'_> {
         workspace: WorkspaceId,
         branch: BranchId,
     ) -> Result<BoundWorkspace, Box<OperationFailure>> {
-        let request = if self.place.known() {
+        let request = if self.control.place.known() {
             Request::MountPlaced {
                 workspace,
                 branch,
-                place: self.place.clone(),
+                place: self.control.place.clone(),
             }
         } else {
             Request::Mount { workspace, branch }
@@ -35,12 +35,12 @@ impl WorkspaceApi<'_> {
         project: &str,
         branch: &str,
     ) -> Result<BoundWorkspace, Box<OperationFailure>> {
-        let request = if self.place.known() {
+        let request = if self.control.place.known() {
             Request::MountNamedPlaced {
                 workspace,
                 project: project.to_owned(),
                 branch: branch.to_owned(),
-                place: self.place.clone(),
+                place: self.control.place.clone(),
             }
         } else {
             Request::MountNamed {

@@ -38,7 +38,7 @@ use layerfs_history::records::{FileDigest, GcIntent, GcIntentKind, GcScopeKind};
 use layerfs_history::{
     BranchId, CommitId, CommitMeta, CommitOutcome, CommitRequest, CommitVia, ForkRequest,
     ForkSource, HistoryCatalog, HistoryCatalogConfig, HistoryError, LayerStackId, LayerStackRecord,
-    StackInitialization,
+    PlaceAuthority, StackInitialization,
 };
 use layerfs_persistence::{
     compact_op_status, CompactFailpoint, CompactPath, CompactRequest, PersistenceConfig,
@@ -74,7 +74,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
     let path = temp.join("store.sqlite");
     let handles = SqliteHandles::create(
         PersistenceConfig::sqlite(path.clone())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         StoragePolicy::frozen_default(),
         &HistoryCatalogConfig {
             binding_key: BINDING.to_vec(),
@@ -89,7 +89,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
 fn reopen(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         [71; 32],
     )
@@ -705,7 +705,6 @@ fn commit_once(path: &Path) -> Result<(Vec<u8>, [u8; 32]), String> {
         second_parent: None,
         meta: CommitMeta::new(CommitVia::Files),
         force: false,
-        required_head: None,
     });
     match outcome {
         Ok(CommitOutcome::Committed { record, .. }) => {
@@ -884,7 +883,7 @@ fn arm_measurement() {
          \"minMicros\": {},\n  \"maxMicros\": {},\n  \"deadBytesBound\": {},\n  \
          \"physicalShrink\": {},\n  \"peakTempBytes\": {},\n  \
          \"liveRoots\": 20,\n  \"deadPacks\": 20,\n  \
-         \"profile\": \"SqlitePersistenceProfile::Normal (WAL/NORMAL)\",\n  \
+         \"profile\": \"SqlitePersistenceProfile::Disposable (WAL/OFF)\",\n  \
          \"platform\": \"{}-{}\",\n  \"rustc\": \"{}\"\n}}\n",
         runs.len(),
         runs[0].0,
@@ -1080,7 +1079,7 @@ const MATRIX: [Row; 60] = [
         evidence: &["engine/crates/layerfs-persistence/tests/sqlite_compact_fixtures.rs#the_sqlite_compaction_receipts_match_the_golden_transcript"],
         note: "Collected digest row gone, retained one kept." },
     Row { id: "AC-19", backend: Backend::Both, tier: "E2", status: Status::Partial,
-        evidence: &["api/crates/layerfs-api/tests/gc_calls.rs#project_hide_path_checks_its_path_grammar_then_reports_markers",
+        evidence: &["api/crates/layerfs-api/tests/gc_calls.rs#project_remove_file_checks_its_path_grammar_then_reports_markers",
                     "engine/crates/layerfs-persistence/tests/path_removal.rs#marker_frontier_and_up_to_date_follow_the_store_position"],
         note: "Path-grammar refusals and the marker frontier are named; the full form table (symlink/hardlink, >4096 bytes, >256 components) is not one test." },
     Row { id: "AC-20", backend: Backend::Both, tier: "E2", status: Status::Partial,
@@ -1214,17 +1213,17 @@ const MATRIX: [Row; 60] = [
         note: "Folder scope refuses the four calls; the admin profile is the only allowance." },
     Row { id: "AC-51", backend: Backend::Both, tier: "E2", status: Status::Executed,
         evidence: &["runner#arm_status_phases",
-                    "control/crates/layerfs-store/tests/compact_report_status.rs#a_live_read_shows_the_sidecar_phase_and_state_and_remembers_a_leftover",
+                    "control/crates/layerfs-store/tests/compact_report_status.rs#status_projects_the_sidecar_phase_and_state",
                     "engine/crates/layerfs-persistence/tests/sqlite_compact_crash.rs#crash_before_seal"],
         note: "The op sidecar records mark/build/verify/install (runner); T10 projects it through store.status, and the named control test asserts the phase, state and phases list." },
     Row { id: "AC-52", backend: Backend::Both, tier: "E2", status: Status::Covered,
         evidence: &["engine/crates/layerfs-persistence/tests/sqlite_compact_fixtures.rs#the_sqlite_compaction_receipts_match_the_golden_transcript",
                     "engine/crates/layerfs-persistence/tests/fixtures/sqlite_compact_golden.json",
-                    "control/crates/layerfs-store/tests/compact_report_status.rs#the_report_is_flat_with_byte_totals_named_bytes"],
+                    "control/crates/layerfs-store/tests/compact_report_status.rs#the_report_wire_is_the_snake_case_contract_shape"],
         note: "Every section 11 field pinned with units and sampling point (golden) and rendered by the T10 wire-shape test; markBytes is a metric, not a result field, and PostgreSQL records it as `compact.mark_bytes`; `deadBytesRefined` is the bound on every path, because the mark leaves no payload sweep to refine it (#42 A10)." },
     Row { id: "AC-53", backend: Backend::Both, tier: "E2", status: Status::Partial,
-        evidence: &["api/crates/layerfs-api/tests/project_export.rs#export_omits_a_path_hidden_by_hide_path",
-                    "api/crates/layerfs-api/tests/gc_calls.rs#project_hide_path_checks_its_path_grammar_then_reports_markers"],
+        evidence: &["api/crates/layerfs-api/tests/project_export.rs#export_omits_a_path_hidden_by_remove_file",
+                    "api/crates/layerfs-api/tests/gc_calls.rs#project_remove_file_checks_its_path_grammar_then_reports_markers"],
         note: "One hidden-path export case is named; the full read-surface table (read/stat/list/glob/diff/revision/edit/grep/blame/cp/apply) is not executed." },
     Row { id: "AC-54", backend: Backend::Both, tier: "E2", status: Status::Partial,
         evidence: &["control/crates/layerfs-store/tests/restore_install.rs#a_folder_made_unprivate_during_the_download_is_refused_before_the_install",
@@ -2361,4 +2360,118 @@ fn the_sqlite_half_of_the_acceptance_matrix_is_executed_and_reported() {
         count(Status::Deferred),
         count(Status::Gap)
     );
+}
+
+// ---- the compact barrier under the place/lease authority ------------------
+
+fn future_ms() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_millis();
+    i64::try_from(now).expect("the clock fits an i64") + 60_000
+}
+
+/// The §5 Store-wide compact barrier, retained: a live place or a live lease
+/// refuses the rebuild with `MountsActive`; an uncertain owner (an expired
+/// lease, or an operator's settle) refuses it with `Unresolved`. Neither
+/// writes a staged Store or an op record.
+#[test]
+fn a_live_or_uncertain_authority_keeps_the_compact_barrier() {
+    let (_temp, handles, path, stack, branch) = mounted_store();
+    let live = mount_intent(
+        stack,
+        branch,
+        0x91,
+        [0x91; 32],
+        "sandbox-live",
+        "machine-live",
+    )
+    .authorized(PlaceAuthority {
+        machine_incarnation: Some("worker:1".to_owned()),
+        sandbox_generation: Some("generation:1".to_owned()),
+        lease_expires_ms: Some(future_ms()),
+        fence_token: Some("fence:91".to_owned()),
+    });
+    handles.history.gc_register(&live).unwrap();
+    let refused = handles.compact(&request(0x92)).unwrap_err();
+    match refused {
+        HistoryError::MountsActive(state) => {
+            assert_eq!(state.holders.len(), 1, "{state:?}");
+            assert_eq!(state.holders[0].op, hex16(&[0x91; 16]));
+        }
+        other => panic!("expected MountsActive, got {other:?}"),
+    }
+    assert!(
+        !compact_path(&path).exists(),
+        "a refused run stages no Store"
+    );
+    assert!(!op_path(&path).exists(), "and no op record");
+
+    // An uncertain owner is `Unresolved`, never adopted.
+    let reopened = reopen(&path);
+    reopened.history.gc_mark_uncertain(&live.op_id).unwrap();
+    assert!(matches!(
+        reopen(&path).compact(&request(0x93)).unwrap_err(),
+        HistoryError::Unresolved(_)
+    ));
+    assert!(!compact_path(&path).exists());
+    reopened.history.gc_release(&live.op_id).unwrap();
+
+    // An expired lease is uncertain too: a slow owner is not a dead owner.
+    let expired = mount_intent(
+        stack,
+        branch,
+        0x94,
+        [0x94; 32],
+        "sandbox-expired",
+        "machine-live",
+    )
+    .authorized(PlaceAuthority {
+        machine_incarnation: Some("worker:1".to_owned()),
+        sandbox_generation: None,
+        lease_expires_ms: Some(0),
+        fence_token: None,
+    });
+    reopened.history.gc_register(&expired).unwrap();
+    assert!(matches!(
+        reopen(&path).compact(&request(0x95)).unwrap_err(),
+        HistoryError::Unresolved(_)
+    ));
+    assert!(!compact_path(&path).exists());
+    reopened.history.gc_release(&expired.op_id).unwrap();
+}
+
+/// The barrier adopts what the caller's boot evidence proves dead: an owner
+/// from another boot of a local SQLite Store is adopted inside the
+/// compaction's admission transaction, and the rebuild proceeds. The lean
+/// schema keeps no Store-side place table for the compaction to read, so a
+/// place-only holder stays conservative here.
+#[test]
+fn a_dead_owner_is_adopted_before_the_compaction_runs() {
+    let (_temp, handles, path, stack, branch) = mounted_store();
+    let dead_owner = |body: u8, sandbox: &str| {
+        mount_intent(stack, branch, body, [body; 32], sandbox, "machine-dead")
+            // another boot of a local sqlite Store cannot still run it
+            .owned(
+                Some("pid:999999@1@ns:1"),
+                Some(&format!("boot:{:032x}", body)),
+            )
+    };
+    let first = dead_owner(0x96, "sandbox-old");
+    let second = dead_owner(0x97, "sandbox-retired");
+    handles.history.gc_register(&first).unwrap();
+    handles.history.gc_register(&second).unwrap();
+
+    // The seal must own the Store's last connection: a second in-process
+    // handle leaves `-wal`/`-shm` behind, and the seal refuses the sidecar with
+    // `Conflict("Store sidecar remains after seal")` instead of rebuilding.
+    let receipt = handles.compact(&request(0x98)).unwrap();
+    assert_eq!(receipt.path, CompactPath::Rebuild);
+    let reopened = reopen(&path);
+    assert!(reopened
+        .history
+        .gc_intents(GcScopeKind::Branch, branch.as_slice())
+        .unwrap()
+        .is_empty());
 }

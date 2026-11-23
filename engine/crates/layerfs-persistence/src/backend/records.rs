@@ -6,6 +6,7 @@ pub(crate) enum Param {
     Bytes(Vec<u8>),
     OptionalBytes(Option<Vec<u8>>),
     OptionalText(Option<String>),
+    OptionalI64(Option<i64>),
 }
 #[derive(Clone, Debug)]
 pub(crate) enum Value {
@@ -129,6 +130,10 @@ pub enum BackendError {
     /// A SQLite Store of schema version 1 (before #91): refused at open with
     /// the offline conversion named, never misread.
     SchemaVersion1,
+    /// A SQLite Store of the released schema version 2 (36/37/38, or
+    /// 42/43/44 with acquisition tables): refused at open with the explicit
+    /// 2.0 conversion named, never silently migrated to version 3.
+    SchemaVersion2,
     /// Stored SQLite layout is not implemented; this is not a corruption verdict.
     UnsupportedSchemaVersion(i64),
     /// The outcome is not proven: the failure may have committed.
@@ -138,6 +143,11 @@ pub enum BackendError {
 pub(crate) const SCHEMA_VERSION_1: &str =
     "schema version 1 Store (one row per inode value and binding hint, before #91): \
 convert a closed copy offline with tools/store_blocks.py migrate";
+/// The refusal a released schema version 2 Store gets at open.
+pub(crate) const SCHEMA_VERSION_2: &str =
+    "schema version 2 Store (36/37/38, or 42/43/44 with acquisition tables): \
+this build writes schema version 3; back up and convert the closed Store once with \
+tools/store_gc_convert.py convert (the 2.0 conversion), then reopen";
 impl From<BackendError> for layerfs_storage::port::PersistenceError {
     fn from(e: BackendError) -> Self {
         match e {
@@ -147,8 +157,11 @@ impl From<BackendError> for layerfs_storage::port::PersistenceError {
             BackendError::SchemaVersion1 => Self::Refused {
                 status: SCHEMA_VERSION_1.to_owned(),
             },
+            BackendError::SchemaVersion2 => Self::Refused {
+                status: SCHEMA_VERSION_2.to_owned(),
+            },
             BackendError::UnsupportedSchemaVersion(version) => Self::Refused {
-                status: format!("unsupported SQLite Store schema version {version}; supported versions are 36/37/38 and 42/43/44; no migration performed"),
+                status: format!("unsupported SQLite Store schema version {version}; supported versions are 39/40/41 and 45/46/47; no migration performed"),
             },
             // §10: the definite out-of-space refusal, named explicitly so a
             // new variant cannot silently inherit a capacity verdict.
@@ -175,6 +188,7 @@ impl From<BackendError> for layerfs_history::HistoryError {
             BackendError::Capacity => Self::Capacity("persistence"),
             BackendError::Integrity => Self::Integrity("persistence"),
             BackendError::SchemaVersion1 => Self::Integrity(SCHEMA_VERSION_1),
+            BackendError::SchemaVersion2 => Self::Integrity(SCHEMA_VERSION_2),
             BackendError::UnsupportedSchemaVersion(_) => {
                 Self::Unsupported("SQLite Store schema version")
             }

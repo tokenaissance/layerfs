@@ -1,32 +1,9 @@
 //! `machine.create`: create a VM machine.
 use crate::calls::table::Kind::{Int, Name, Size, Text};
 use crate::calls::table::{a, call, opt, Call, PROGRESS};
-#[cfg(feature = "machine")]
 use crate::calls::Context;
-use crate::calls::{Form, Policy};
-#[cfg(feature = "machine")]
 use layerfs_bridge::control::SdkValue;
-#[cfg(feature = "machine")]
 use layerfs_home::outcome::Outcome;
-
-/// Its answer: `ok`; the long form adds what was made.
-const FORM: Form = Form::of(
-    &["ok"],
-    &[],
-    &[
-        "ok",
-        "outcome",
-        "machine",
-        "platform",
-        "backend",
-        "cpus",
-        "memory_bytes",
-        "disk_bytes",
-        "image",
-        "os_image",
-        "created_at",
-    ],
-);
 
 /// Its table entry.
 pub(crate) const CALL: Call = call(
@@ -41,14 +18,11 @@ pub(crate) const CALL: Call = call(
         opt("os_image", Text),
         PROGRESS,
     ],
-    "create a VM machine (lima, apple-container) and start it",
+    "create an enabled VM machine (apple-container, lima)",
     run,
-)
-.policy(Policy::Platform("platform"))
-.form(&FORM);
+);
 
-/// Runs `machine.create`: `{ phase, done, total }` events, phases
-/// `bundle`, `boot` and `worker`.
+/// Runs `machine.create`.
 #[cfg(feature = "machine")]
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
     let text = |name: &str| args.get_text(name).map(str::to_owned);
@@ -65,6 +39,12 @@ fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
     layerfs_control::machine::create(home, events, &request)
 }
 
-// without the `machine` feature (the guest worker's build) it is
-// refused before any effect
-crate::calls::host_only::host_only!("create");
+/// Without the `machine` feature (the guest worker's build) it is
+/// refused before any effect.
+#[cfg(not(feature = "machine"))]
+fn run(_context: &mut Context<'_>, _args: &SdkValue) -> Outcome {
+    Err(layerfs_home::outcome::refused(
+        "Unsupported",
+        "machine.create is not built yet (#533 step 6)",
+    ))
+}

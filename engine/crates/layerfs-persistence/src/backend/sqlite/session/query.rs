@@ -63,18 +63,6 @@ pub(crate) fn history(key: &str) -> Result<&'static str, BackendError> {
         "branch_branch_next_page" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/branch_branch_next_page.sql"
         )),
-        "branch_branch_from_page" => Ok(include_str!(
-            "../../../../sql/sqlite/queries/history/branch_branch_from_page.sql"
-        )),
-        "branch_move_branch" => Ok(include_str!(
-            "../../../../sql/sqlite/queries/history/branch_move_branch.sql"
-        )),
-        "commit_identity_range" => Ok(include_str!(
-            "../../../../sql/sqlite/queries/history/commit_identity_range.sql"
-        )),
-        "layerstack_identity_range" => Ok(include_str!(
-            "../../../../sql/sqlite/queries/history/layerstack_identity_range.sql"
-        )),
         "branch_insert_branch" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/branch_insert_branch.sql"
         )),
@@ -234,8 +222,14 @@ pub(crate) fn history(key: &str) -> Result<&'static str, BackendError> {
         "gc_intent_release" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/gc_intent_release.sql"
         )),
+        "gc_intent_release_done" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_release_done.sql"
+        )),
         "gc_intent_uncertain" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/gc_intent_uncertain.sql"
+        )),
+        "gc_intent_renew" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_renew.sql"
         )),
         "gc_intent_list" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/gc_intent_list.sql"
@@ -258,6 +252,19 @@ pub(crate) fn history(key: &str) -> Result<&'static str, BackendError> {
         "gc_intent_all_store" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/gc_intent_all_store.sql"
         )),
+        "gc_intent_list_machine" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_list_machine.sql"
+        )),
+        "gc_intent_done" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_done.sql"
+        )),
+        "gc_intent_done_insert" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_done_insert.sql"
+        )),
+        "gc_intent_done_delete" => Ok(include_str!(
+            "../../../../sql/sqlite/queries/history/gc_intent_done_delete.sql"
+        )),
+
         "gc_branch_stack_any" => Ok(include_str!(
             "../../../../sql/sqlite/queries/history/gc_branch_stack_any.sql"
         )),

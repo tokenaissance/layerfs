@@ -37,7 +37,6 @@ fn append(c: &dyn HistoryCatalog, b: BranchId, n: u8) -> CommitRecord {
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Workspace),
             force: false,
-            required_head: None,
         })
         .unwrap()
     {

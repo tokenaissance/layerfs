@@ -59,6 +59,12 @@ operation `store.diagnose`
 | Saved schema text and every actual schema object are compared with the shipped format in the same transaction, so rewriting the saved definition after dropping a trigger does not pass. | [`sqlite/schema_diagnostic.rs`](../../../../engine/crates/layerfs-persistence/src/backend/sqlite/schema_diagnostic.rs) |
 | `quick_check` excludes uniqueness and index/table equivalence; engine output is capped at 100 messages, and reaching the cap is `Unknown` coverage. | [`sqlite.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/sqlite.rs) |
 
+Beside the audit, the doctor reads two bounded admission views on the same
+diagnostic open, each in its own read transaction: `diagnostic_mounts` (the
+live mount holders, `state <> 'done'`) and `diagnostic_done_audit` (one
+page of the retained operator-audit rows, oldest first). Neither changes an
+intent; a failed read is `Unknown`, never a release.
+
 ## Structural fallback
 
 When read-only admission or the logical audit fails, `sqlite_structure`
@@ -101,34 +107,6 @@ Reads already admitted in the pinned transaction can stay valid after access
 is revoked; a later denied read leaves coverage incomplete. Losing the backend
 during a check is a provider failure, never invented corruption. Reports omit
 passwords, credential-bearing URLs and raw driver parameters.
-
-## One project's data
-
-`SqliteHandles::diagnose_project` and `PostgresHandles::diagnose_project`
-(`project doctor --full`) check one project in one read view (a SQLite
-read transaction; a PostgreSQL REPEATABLE READ READ ONLY view after the
-same admission), writing nothing to the Store
-([`project.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/project.rs)).
-
-```text
- the live layer_stack row by id (not retired)     missing -> Fail
- heads: main's head Layer, each live Branch's head Commit (else base Layer)
-   -> scratch heads(root, label)                  missing/foreign -> Fail
- for each distinct root (progress done/total trees):
-   qualify_root(root, stack scope, profile)       --> Fail | Unknown
-   closure over references from the root, visited set in scratch:
-     locate (absent -> Fail "missing"), Reader reconstruct, length,
-     FinalizedObject::admit, validate_stored_children
- returns ProjectCoverage { trees, heads, objects, failed, incomplete }
-```
-
-| Rule | Source |
-| --- | --- |
-| The object checks are the whole-Store scan's; only the set differs: the closure of the project's heads instead of every `object_location` row. | [`project.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/project.rs), [`scan.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/scan.rs) |
-| Heads, the visited set and the queue live in the scratch temporary database outside the Store, removed when its connection closes; resident state is one batch of 64 identities and the Reader's caches. | [`scratch.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/scratch.rs) |
-| An object two trees of the project share is read once; each project's audit has its own visited set. | [`project.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/project.rs) |
-| An object whose own check failed still has its children visited; a context failure a missing child explains is left to that child's `missing` finding. | same |
-| Every observation has id `project.data`; storage outcomes are classified as in the scan (`Unknown` for an unavailable read, never a corruption verdict). | [`observation.rs`](../../../../engine/crates/layerfs-persistence/src/diagnostic/observation.rs) |
 
 ## Inventory and coverage
 
@@ -176,7 +154,7 @@ graphs block it explicitly
 
 | Test | Command | Shows |
 | --- | --- | --- |
-| [`store_diagnostic.rs`](../../../../engine/crates/layerfs-persistence/tests/store_diagnostic.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test store_diagnostic` | Audits of real Normal Stores with live WAL; damage found in full mode and named as excluded in quick mode |
+| [`store_diagnostic.rs`](../../../../engine/crates/layerfs-persistence/tests/store_diagnostic.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test store_diagnostic` | Audits of real Disposable Stores with live WAL; damage found in full mode and named as excluded in quick mode |
 | [`diagnostic_overwrite.rs`](../../../../engine/crates/layerfs-persistence/tests/diagnostic_overwrite.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test diagnostic_overwrite` | Exact overwrite reconstruction, including late publication and retained forks |
 | [`sqlite_structure_diagnostic.rs`](../../../../engine/crates/layerfs-persistence/tests/sqlite_structure_diagnostic.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test sqlite_structure_diagnostic` | Raw structural errors stay distinct from unsupported schemas |
 | [`postgresql_doctor_physical.rs`](../../../../engine/crates/layerfs-persistence/tests/postgresql_doctor_physical.rs) | `LAYERFS_TEST_POSTGRES_URL=… cargo +1.85.1 test --locked -p layerfs-persistence --test postgresql_doctor_physical` | Per-relation amcheck coverage; a missing extension is `Unknown` |

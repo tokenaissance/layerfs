@@ -55,6 +55,18 @@ pub fn worker_record(home: &Path, machine: &str) -> PathBuf {
     machine_dir(home, machine).join("worker.json")
 }
 
+/// `machine/<machine>/sandbox-retired/`: one tombstone per closed Sandbox,
+/// outside `sandbox/` so a Sandbox listing never mistakes it for one.
+pub fn sandbox_retired_dir(home: &Path, machine: &str) -> PathBuf {
+    machine_dir(home, machine).join("sandbox-retired")
+}
+
+/// `machine/<machine>/sandbox-retired/<name>.json`: a closed Sandbox's
+/// name, generation and retired time, written before its record is removed.
+pub fn sandbox_tombstone(home: &Path, machine: &str, sandbox: &str) -> PathBuf {
+    sandbox_retired_dir(home, machine).join(format!("{sandbox}.json"))
+}
+
 /// `sandbox/<name>/`: a Sandbox's record, daemon keys and Workspaces.
 pub fn sandbox_dir(home: &Path, sandbox: &str) -> PathBuf {
     home.join("sandbox").join(sandbox)
@@ -86,8 +98,10 @@ pub fn run_root(root: &Path) -> PathBuf {
 }
 
 /// `log/`: `uncertain.jsonl` (never rotated) and the logs that rotate
-/// once to `<name>.1.jsonl`: `leases`, `sweep` and, on the side that keeps
-/// a Sandbox's command records, `exec`.
+/// once to `<name>.1.jsonl`: `leases`, `migration-failures`, `import-env`
+/// and, on the side that keeps a Sandbox's command records, `exec`.
+/// `init-failures` has no writer in 2.0: it is only copied from a 1.1.0
+/// home.
 pub fn log_dir(home: &Path) -> PathBuf {
     home.join("log")
 }

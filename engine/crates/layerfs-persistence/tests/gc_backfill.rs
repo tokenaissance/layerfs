@@ -18,7 +18,7 @@ use support::{branch_id, name, root, stack, Temp, BINDING};
 const NEXT_SERIAL: &str = "    next_history_serial INTEGER NOT NULL DEFAULT 1,\n";
 
 fn config(path: &std::path::Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 
 fn create(path: &std::path::Path) -> SqliteHandles {
@@ -136,7 +136,6 @@ fn commit(handles: &SqliteHandles, branch: BranchId, tag: u8) -> CommitRecord {
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap()
     {

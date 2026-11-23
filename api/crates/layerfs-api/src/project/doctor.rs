@@ -1,33 +1,28 @@
-//! `project.doctor`: one project's record, and its record against the
-//! Store's own list (a project the Store does not list is a notice with
-//! its fix); `--full` also reads and checks everything main's head and
-//! each Branch's head reach (`project.data`), sending `data` progress
-//! events while it reads.
-use crate::calls::table::Kind::{Bool, Project};
-use crate::calls::table::{a, call, opt, Call, PROGRESS};
+//! `project.doctor`: one project's Store mount holders, without repair.
+use crate::calls::table::{a, call, Call, Kind::Project};
 use crate::calls::Context;
-use crate::doctor::answer::{self, FORM};
 use layerfs_bridge::control::SdkValue;
-use layerfs_control::doctor::{Kind, Options};
+use layerfs_control::doctor::target::{DoctorRequest, DoctorTarget};
+use layerfs_control::doctor::doctor_target;
 use layerfs_home::outcome::Outcome;
 
-/// Its table entry.
 pub(crate) const CALL: Call = call(
     "project",
     "doctor",
     &[a("project", Project)],
-    &[opt("full", Bool), PROGRESS],
-    "check one project's record; with --full, also read and check its data",
+    &[],
+    "check a project's Store for mount holders that block compaction",
     run,
-)
-.unopened()
-.form(&FORM);
+);
 
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
-    let project = args.get_text("project").unwrap_or("");
-    let options = Options {
-        full: args.get("full") == Some(&SdkValue::Bool(true)),
-        ..Options::default()
+    let (home, _) = context.parts();
+    let request = DoctorRequest {
+        target: DoctorTarget::Project(args.get_text("project").unwrap_or("").to_owned()),
+        timeout: None,
+        quick: false,
+        write_test: false,
+        build: crate::home_family::build(),
     };
-    answer::run(context, Kind::Project, project, options)
+    doctor_target(home, &request)
 }

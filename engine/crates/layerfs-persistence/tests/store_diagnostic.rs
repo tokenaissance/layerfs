@@ -1,4 +1,4 @@
-//! Integrity diagnosis against real Normal databases, including live WAL.
+//! Integrity diagnosis against real Disposable databases, including live WAL.
 mod support;
 use layerfs_content::{encode_whole_file_payload, FinalizedObject, ObjectRole};
 use layerfs_history::HistoryCatalogConfig;
@@ -18,7 +18,7 @@ fn authority() -> HistoryCatalogConfig {
     }
 }
 fn config(path: &std::path::Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 fn observations(handles: &SqliteHandles, quick: bool) -> Vec<Observation> {
     let mut result = Vec::new();
@@ -250,7 +250,6 @@ fn independent_history_lineage_checks_accept_real_forks_and_detect_damage() {
                 second_parent: None,
                 meta: CommitMeta::new(CommitVia::Files),
                 force: false,
-                required_head: None,
             })
             .unwrap();
         let CommitOutcome::Committed { record, .. } = outcome else {

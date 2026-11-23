@@ -77,20 +77,14 @@ impl SqliteHandles {
         on_phase: &mut dyn FnMut(&'static str),
     ) -> HistoryResult<CompactReceipt> {
         let store = self.storage.session.path.clone();
-        // §9: once the run stops, by a reply or by a panic that unwinds out
-        // of it, its own record (when it leaves one) is no longer in flight;
-        // a worker that lives on after a panic would otherwise keep the
-        // Store `busy` until it restarts.
-        let returned = Returned {
-            store: &store,
-            op_id: &request.op_id,
-        };
         let mut metrics = RunMetrics::start(None, on_phase);
         let result = self.compact_measured(request, &mut metrics);
-        // Mark it before the reply so the next `store.compact` judges the
-        // leftover even while this process is still alive; the window before
-        // this point stays protected by the owner liveness guard.
-        drop(returned);
+        // §9: the run is replying, so its own record (when it leaves one) is
+        // no longer in flight. Mark it before the reply so the next
+        // `store.compact` judges the leftover even while this process is still
+        // alive; the window before this point stays protected by the owner
+        // liveness guard.
+        let _ = mark_returned(&store, &request.op_id);
         metrics.finish(&result);
         result
     }
@@ -560,18 +554,5 @@ impl SqliteHandles {
                 history_rows,
             ))
         }
-    }
-}
-
-/// Marks a run's record returned when dropped: after the run replies, and
-/// when a panic unwinds out of it.
-struct Returned<'a> {
-    store: &'a std::path::Path,
-    op_id: &'a [u8; 16],
-}
-
-impl Drop for Returned<'_> {
-    fn drop(&mut self) {
-        let _ = mark_returned(self.store, self.op_id);
     }
 }

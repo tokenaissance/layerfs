@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vfs::initialize(args.len() == 5)?;
     let selected = match args[3].as_str() {
         "durable" => SqlitePersistenceProfile::Durable,
-        "disposable" => SqlitePersistenceProfile::Normal,
+        "disposable" => SqlitePersistenceProfile::Disposable,
         _ => return Err("explicit profile required".into()),
     };
     let creation = Instant::now();

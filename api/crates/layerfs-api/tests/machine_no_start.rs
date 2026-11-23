@@ -1,8 +1,8 @@
 //! No list, get or status call starts a machine (#535 P4, #536 §10b): with
 //! a stopped Lima machine holding a Store, a project and a Sandbox (a
 //! stand-in `limactl` that reports it stopped and logs every command),
-//! every `*.list`, `*.get` and `*.status` call answers from records and
-//! live probes (`machine list` and `machine get` with `--with live` too). `sandbox.get` answers the record
+//! every `*.list`, `*.get` and `*.status` call and `machine.platforms`
+//! answers from records and live probes. `sandbox.get` answers the record
 //! with no Workspaces and why; `workspace.status` is refused `Unavailable`.
 //! Nothing ran a start: no `start.lock`, no `limactl start`, no
 //! `worker.json`. The same holds with a stale `worker.json` that nothing
@@ -36,11 +36,7 @@ fn t(s: &str) -> SdkValue {
 }
 
 fn call(home: &Path, name: &str, args: &[(&str, &str)]) -> Result<SdkValue, (String, String)> {
-    let live = |(n, v): &(&str, &str)| match (*n, *v) {
-        ("with", section) => ("with".to_owned(), SdkValue::List(vec![t(section)])),
-        (n, v) => (n.to_owned(), t(v)),
-    };
-    let args = SdkValue::Map(args.iter().map(live).collect());
+    let args = SdkValue::Map(args.iter().map(|(n, v)| ((*n).to_owned(), t(v))).collect());
     layerfs_api::call(Some(home), name, args, &mut |_| {}).map_err(|r| (r.code, r.message))
 }
 
@@ -54,7 +50,6 @@ fn home_with_stopped_vm(tag: &str) -> PathBuf {
         &SdkValue::map([
             ("name", t("dev")),
             ("platform", t("lima")),
-            ("vm_name", t("layerfs-test-dev")),
             ("state", t("stopped")),
         ]),
     )
@@ -66,7 +61,7 @@ fn home_with_stopped_vm(tag: &str) -> PathBuf {
             ("kind", t("sqlite")),
             ("binding", SdkValue::Bytes(vec![7; 16])),
             ("cursor", SdkValue::Bytes(vec![8; 32])),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
             ("machine", t("dev")),
         ]),
     )
@@ -94,12 +89,12 @@ fn home_with_stopped_vm(tag: &str) -> PathBuf {
 fn every_read(home: &Path) {
     for (name, args) in [
         ("machine.list", vec![]),
-        ("machine.list", vec![("with", "live")]),
-        ("machine.get", vec![("machine", "dev")]),
-        ("machine.get", vec![("machine", "dev"), ("with", "live")]),
+        ("machine.platforms", vec![]),
+        ("machine.get", vec![("name", "dev")]),
+        ("machine.status", vec![("name", "dev")]),
         ("store.list", vec![]),
-        ("store.get", vec![("store", "shop")]),
-        ("store.get", vec![("store", "shop"), ("with", "live")]),
+        ("store.get", vec![("name", "shop")]),
+        ("store.status", vec![("name", "shop")]),
         ("project.list", vec![]),
         ("project.get", vec![("project", "shop/api")]),
         ("sandbox.list", vec![]),
@@ -107,42 +102,32 @@ fn every_read(home: &Path) {
     ] {
         call(home, name, &args).unwrap_or_else(|(code, why)| panic!("{name}: {code} {why}"));
     }
-    let status = call(home, "store.get", &[("store", "shop"), ("with", "live")]).unwrap();
-    assert_eq!(status.get_text("state"), Some("blocked"), "{status:?}");
+    let status = call(home, "store.status", &[("name", "shop")]).unwrap();
+    assert_eq!(status.get_text("state"), Some("down"), "{status:?}");
     // a list item carries the same state, starting nothing (#536 §10b)
     let listed = call(home, "store.list", &[]).unwrap();
     let Some(SdkValue::List(items)) = listed.get("items") else {
         panic!("{listed:?}")
     };
-    let shop = items.iter().find(|i| i.get_text("store") == Some("shop"));
+    let shop = items.iter().find(|i| i.get_text("name") == Some("shop"));
     assert_eq!(
         shop.and_then(|i| i.get_text("state")),
-        Some("blocked"),
+        Some("down"),
         "{listed:?}"
     );
-    let machine = call(home, "machine.get", &[("machine", "dev")]).unwrap();
+    let machine = call(home, "machine.get", &[("name", "dev")]).unwrap();
     assert_eq!(machine.get_text("state"), Some("stopped"), "{machine:?}");
 
-    // blocked by its stopped machine, from records: no daemon is asked
-    let got = call(home, "sandbox.get", &[("sandbox", "s1")]).unwrap();
-    assert_eq!(got.get_text("state"), Some("blocked"), "{got:?}");
-    let by = got.get("blocked_by").unwrap_or_else(|| panic!("{got:?}"));
-    assert_eq!(by.get_text("machine"), Some("dev"), "{got:?}");
-    assert_eq!(by.get_text("reason"), Some("stopped"), "{got:?}");
+    let got = call(home, "sandbox.get", &[("name", "s1")]).unwrap();
+    assert_eq!(got.get_text("name"), Some("s1"));
+    assert_eq!(got.get("workspaces"), Some(&SdkValue::List(Vec::new())));
+    let why = got.get_text("down_reason").unwrap_or("");
+    assert!(!why.is_empty(), "{got:?}");
 
-    let (code, message) = call(home, "workspace.status", &[("workspace", "s1:w")]).unwrap_err();
+    let (code, message) = call(home, "workspace.status", &[("ws", "s1:/w")]).unwrap_err();
     assert_eq!(code, "Unavailable", "{message}");
     // D11: nothing starts a machine; the refusal names the call that does
     assert!(message.contains("layerfs machine start dev"), "{message}");
-    // and carries it as the refusal's `fix` (conformance R1 F5)
-    let args = SdkValue::map([("workspace", t("s1:w"))]);
-    let refusal =
-        layerfs_api::call(Some(home), "workspace.status", args, &mut |_| {}).expect_err("refused");
-    assert_eq!(
-        refusal.detail.get_text("fix"),
-        Some("layerfs machine start dev"),
-        "{refusal:?}"
-    );
 }
 
 fn nothing_started(home: &Path, tools: &Path) {

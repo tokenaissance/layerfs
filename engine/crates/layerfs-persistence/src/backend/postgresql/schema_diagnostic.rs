@@ -44,6 +44,7 @@ content_signature signature bytea NO
 file_digest digest bytea NO
 file_digest length bigint NO
 file_digest root bytea NO
+
 gc_dead kind text NO
 gc_dead id bytea NO
 gc_intent op_id bytea NO
@@ -65,6 +66,11 @@ gc_intent artifact text YES
 gc_intent high_water bigint YES
 gc_intent evidence text YES
 gc_intent updated_ms bigint NO
+gc_intent machine_incarnation text YES
+gc_intent sandbox_generation text YES
+gc_intent lease_expires_ms bigint YES
+gc_intent fence_token text YES
+
 gc_op id bigint NO
 gc_op generation bigint NO
 gc_op phase text NO
@@ -92,6 +98,7 @@ gc_op pid bigint YES
 gc_op backend_start text YES
 gc_op usename text YES
 gc_op incarnation bigint YES
+
 history_meta id bigint NO
 history_meta catalog_id bytea NO
 history_meta catalog_incarnation bigint NO

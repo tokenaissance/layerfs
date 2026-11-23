@@ -10,7 +10,6 @@ use super::lookup::{
     self as args, branch_node, commit_value, hex, history, invalid, layer_value, node_text, refuse,
     root, short, Answer,
 };
-use super::resolve::{self, Named};
 use crate::store::{CommitError, Store};
 use layerfs_bridge::control::{SdkRefusal, SdkValue};
 use layerfs_content::{
@@ -19,8 +18,8 @@ use layerfs_content::{
 };
 use layerfs_history::{
     AddLayerOutcome, AddLayerRequest, BranchId, BranchMergeRequest, CommitHistoryRequest, CommitId,
-    CommitMeta, CommitVia, ForkRequest, ForkSource, HistoryError, LayerId, LayerStackRecord,
-    MergeCommit, MergeHead, MergeSide, NodeId, MAXIMUM_PAGE_RECORDS,
+    CommitMeta, CommitVia, ForkRequest, ForkSource, HistoryError, LayerHistoryRequest, LayerId,
+    LayerStackRecord, MergeCommit, MergeHead, MergeSide, NodeId, MAXIMUM_PAGE_RECORDS,
 };
 use layerfs_workspace::InodeSerials;
 use std::sync::Arc;
@@ -30,11 +29,6 @@ pub const MAIN: &str = "main";
 
 /// Serials one merge reservation takes.
 const MERGE_SERIALS: u64 = 64;
-
-/// The conflicting paths a merge's `Conflict` names in `paths`, in order:
-/// the call surface's inline list (its first 20), whatever the byte window
-/// of `conflicts` held; `total` counts them all.
-const CONFLICT_PATHS: usize = 20;
 
 /// One merge side by name.
 fn side(
@@ -56,16 +50,166 @@ fn side(
     ))
 }
 
-/// A new Branch `name` at the head of `from` (main when absent), or at the
-/// Commit `at` of its history. `from` is a Branch name first and, when no
-/// Branch has it, a Commit id or a prefix; `at` is a Commit id or a prefix.
-/// Metadata only.
+/// Every Branch, and main, one page of `limit` from `pos`; with `name`,
+/// that one Branch from the name index, never a listing (#352 009.a1).
+pub fn list(
+    store: &Arc<Store>,
+    stack: &LayerStackRecord,
+    limit: usize,
+    pos: u64,
+    name: Option<&str>,
+) -> Answer {
+    list_bounded(store, stack, limit, pos, name, None)
+}
+
+/// Numbered reads cap actual candidate visits rather than page ordinals.
+pub fn list_bounded(
+    store: &Arc<Store>,
+    stack: &LayerStackRecord,
+    limit: usize,
+    pos: u64,
+    name: Option<&str>,
+    work_limit: Option<usize>,
+) -> Answer {
+    if let Some(name) = name {
+        let found = if name == MAIN {
+            Some(main_item(store, stack))
+        } else {
+            match args::branch(store, stack, name) {
+                Ok(branch) => Some(item(&branch)),
+                Err(refusal) if refusal.code == "NoSuchBranch" => None,
+                Err(refusal) => return Err(refusal),
+            }
+        };
+        let items: Vec<SdkValue> = found
+            .into_iter()
+            .filter(|_| pos == 0 && limit > 0)
+            .collect();
+        return Ok(SdkValue::map([
+            ("items", SdkValue::List(items)),
+            ("hasMore", SdkValue::Bool(false)),
+            ("nextPagePos", SdkValue::Null),
+        ]));
+    }
+    let mut page = layerfs_history::Page {
+        cursor: None,
+        limit: MAXIMUM_PAGE_RECORDS,
+    };
+    let (mut seen, mut items, mut more, mut spent) = (0u64, Vec::new(), false, 0);
+    // Main participates in the same byte-name ordering as the Branches.
+    let mut main = Some(main_item(store, stack));
+    let (mut work, mut bound_hit) = (0usize, false);
+    let mut add = |value: SdkValue| -> bool {
+        if work_limit.is_some_and(|limit| work >= limit) {
+            bound_hit = true;
+            return false;
+        }
+        work += 1;
+        if seen < pos {
+            seen += 1;
+            return true;
+        }
+        let cost = value.get_text("name").map_or(0, str::len) + 512;
+        if items.len() == limit || spent + cost > crate::read::reads::REPLY_BUDGET {
+            more = true;
+            return false;
+        }
+        spent += cost;
+        items.push(value);
+        true
+    };
+    'pages: loop {
+        let found = store.history().branches(stack.id, &page).map_err(history)?;
+        for branch in found.records {
+            if branch.name.as_str() == MAIN {
+                continue;
+            }
+            if branch.name.as_str() > MAIN {
+                if let Some(value) = main.take() {
+                    if !add(value) {
+                        break 'pages;
+                    }
+                }
+            }
+            if !add(item(&branch)) {
+                break 'pages;
+            }
+        }
+        match found.continuation {
+            Some(cursor) => page.cursor = Some(cursor),
+            None => {
+                if let Some(value) = main.take() {
+                    add(value);
+                }
+                break;
+            }
+        }
+    }
+    if bound_hit {
+        return Err(crate::read::query::capacity(
+            "branch inventory query work bound reached",
+        ));
+    }
+    let next = args::next_page(pos, items.len(), more);
+    Ok(SdkValue::map([
+        ("items", SdkValue::List(items)),
+        ("hasMore", SdkValue::Bool(!matches!(next, SdkValue::Null))),
+        ("nextPagePos", next),
+    ]))
+}
+
+/// The listed form of the project's main line. `main` is the stack's head
+/// Layer, but `add_project` also records a Branch named `main`; when it
+/// exists, the item carries its id so `service::branch_named` resolves the
+/// main mount scope. The name index is read directly: `args::branch` names
+/// `main` as the line and never a Branch, refusing it (spec 4.4).
+fn main_item(store: &Arc<Store>, stack: &layerfs_history::LayerStackRecord) -> SdkValue {
+    let id = recorded_main(store, stack)
+        .map_or(SdkValue::Null, |branch| SdkValue::text(hex(branch.id.as_slice())));
+    SdkValue::map([
+        ("name", SdkValue::text(MAIN)),
+        ("id", id),
+        ("base", SdkValue::text(hex(stack.head_layer.as_slice()))),
+        ("head", SdkValue::Null),
+    ])
+}
+
+/// The Branch `stack` records for its main line, when it records one:
+/// `init` and `add_project` fork a Branch named `main` at the stack's head.
+fn recorded_main(
+    store: &Arc<Store>,
+    stack: &layerfs_history::LayerStackRecord,
+) -> Option<layerfs_history::BranchRecord> {
+    let name = layerfs_history::HistoryName::new(MAIN).ok()?;
+    store.history().branch_named(stack.id, &name).ok().flatten()
+}
+
+/// The listed form of one Branch.
+fn item(branch: &layerfs_history::BranchRecord) -> SdkValue {
+    SdkValue::map([
+        ("name", SdkValue::text(branch.name.as_str())),
+        ("id", SdkValue::text(hex(branch.id.as_slice()))),
+        ("base", SdkValue::text(hex(branch.base_layer.as_slice()))),
+        (
+            "head",
+            SdkValue::opt_text(branch.head_commit.map(|id| hex(id.as_slice()))),
+        ),
+        (
+            "forkedFrom",
+            branch
+                .forked_from
+                .map_or(SdkValue::Null, |node| SdkValue::text(node_text(node))),
+        ),
+    ])
+}
+
+/// A new Branch `name` at `from` (main when absent): a Branch, main, or a
+/// Commit or Layer identity. Metadata only.
 pub fn fork(
     store: &Arc<Store>,
     stack: &LayerStackRecord,
     name: &str,
     from: Option<&str>,
-    at: Option<&str>,
 ) -> Answer {
     if name == MAIN {
         return Err(refuse(
@@ -75,30 +219,30 @@ pub fn fork(
         ));
     }
     let from = from.unwrap_or(MAIN);
-    let named = resolve::reference(store, stack, from)?;
-    let node = match at {
-        Some(at) => {
-            let node = resolve::commit(store, stack, at)?.node();
-            super::listing::held(store, from, named.node(stack), node)?
-        }
-        None => named.node(stack),
-    };
-    let source = match (node, &named) {
-        (NodeId::Layer(layer), _) => ForkSource::Layer(layer),
-        // a Branch's own head is read through that Branch
-        (NodeId::Commit(commit), Named::Branch(branch)) if branch.head_commit == Some(commit) => {
-            ForkSource::Commit {
+    let source = if from == MAIN {
+        ForkSource::Layer(stack.head_layer)
+    } else if layerfs_history::HistoryName::new(from).is_ok() {
+        // A checked history name is a Branch and is never retried as a node
+        // identity; an absent or removed one is `NoSuchBranch` (spec 4.4).
+        let branch = args::branch(store, stack, from)?;
+        match branch.head_commit {
+            Some(commit) => ForkSource::Commit {
                 branch: branch.id,
                 commit,
-            }
+            },
+            None => ForkSource::Layer(branch.base_layer),
         }
-        (NodeId::Commit(commit), _) => {
-            let record = args::commit(store, commit)?;
-            let branch = record
-                .meta
-                .branch
-                .ok_or_else(|| invalid("the Commit names no Branch to read it through"))?;
-            ForkSource::Commit { branch, commit }
+    } else {
+        match args::node(from)? {
+            NodeId::Layer(layer) => ForkSource::Layer(layer),
+            NodeId::Commit(commit) => {
+                let record = args::commit(store, commit)?;
+                let branch = record
+                    .meta
+                    .branch
+                    .ok_or_else(|| invalid("the Commit names no Branch to read it through"))?;
+                ForkSource::Commit { branch, commit }
+            }
         }
     };
     let name = args::name(name)?;
@@ -123,14 +267,6 @@ pub fn fork(
         (
             "head",
             SdkValue::opt_text(snapshot.branch.head_commit.map(|id| hex(id.as_slice()))),
-        ),
-        (
-            "commit",
-            SdkValue::text(node_text(branch_node(&snapshot.branch))),
-        ),
-        (
-            "root",
-            SdkValue::text(hex(snapshot.effective_root.as_bytes())),
         ),
     ]))
 }
@@ -179,38 +315,93 @@ pub fn list_commits(
     ]))
 }
 
-/// What one merge is asked: `right` merged into `left` (Branch names or
-/// main), the result written to `into` when it names a new Branch, else to
-/// `left` itself; `expected` (a Commit id or prefix) must be `left`'s head.
-pub struct Merge<'a> {
-    /// The Branch merged into, whose `/.lww` rules apply.
-    pub left: &'a str,
-    /// The Branch, or main, merged from.
-    pub right: &'a str,
-    /// The new Branch the result goes to; `left` moves when absent.
-    pub into: Option<&'a str>,
-    /// The head `left` must still be at.
-    pub expected: Option<&'a str>,
-    /// The merge Commit's message.
-    pub message: Option<&'a str>,
-    /// The merge units (#352 F-057).
-    pub units: &'a [MergeUnit],
+/// Serialized size one listed Layer reserves against the reply budget.
+const LAYER_ITEM_COST: usize = 512;
+
+/// The project's published Layers, newest first: one page of `limit` from
+/// `pos`. `commit.list` on main walks the publication chain (S §3.3: on
+/// main, a Layer id is accepted wherever a Commit is). Source Branch names
+/// come from one bounded Branches page of the same catalog, resolving only
+/// the identities outside it, as the operator's inspect does.
+pub fn list_layers(store: &Arc<Store>, stack: &LayerStackRecord, limit: usize, pos: u64) -> Answer {
+    let catalog = store.history();
+    let names: std::collections::BTreeMap<BranchId, String> = catalog
+        .branches(
+            stack.id,
+            &layerfs_history::Page {
+                cursor: None,
+                limit: MAXIMUM_PAGE_RECORDS,
+            },
+        )
+        .map_err(history)?
+        .records
+        .into_iter()
+        .map(|branch| (branch.id, branch.name.as_str().to_owned()))
+        .collect();
+    let (mut cursor, mut seen, mut items, mut spent, mut more) = (None, 0u64, Vec::new(), 0, false);
+    'pages: loop {
+        let page = catalog
+            .layer_history(&LayerHistoryRequest {
+                stack: stack.id,
+                start: Some(stack.head_layer),
+                cursor,
+                limit: MAXIMUM_PAGE_RECORDS,
+            })
+            .map_err(history)?;
+        for record in page.records {
+            if seen < pos {
+                seen += 1;
+                continue;
+            }
+            if items.len() == limit || spent + LAYER_ITEM_COST > crate::read::reads::REPLY_BUDGET {
+                more = true;
+                break 'pages;
+            }
+            spent += LAYER_ITEM_COST;
+            let source_branch = match record.source_branch {
+                Some(id) => match names.get(&id) {
+                    Some(name) => Some(name.clone()),
+                    None => catalog
+                        .branch_any(id)
+                        .map_err(history)?
+                        .map(|branch| branch.name.as_str().to_owned()),
+                },
+                None => None,
+            };
+            items.push(layer_value(&record, source_branch.as_deref()));
+        }
+        match page.continuation {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    let next = args::next_page(pos, items.len(), more);
+    Ok(SdkValue::map([
+        ("items", SdkValue::List(items)),
+        ("hasMore", SdkValue::Bool(!matches!(next, SdkValue::Null))),
+        ("nextPagePos", next),
+    ]))
 }
 
-/// Merges `request.right` into `request.left`: into a new Branch `into`
-/// (neither side changes), or moving `left` to the result. A unit both
-/// sides changed is taken whole from the side with the later write (#352
-/// F-057). `left` already holding `right` answers `unchanged` and writes
-/// nothing.
-pub fn merge(store: &Arc<Store>, stack: &LayerStackRecord, request: &Merge<'_>) -> Answer {
-    let name = request.into.unwrap_or(request.left);
+/// Merges `left` and `right` (Branch names or main) into a new Branch
+/// `name`; `message` names the merge Commit. A unit both sides changed is
+/// taken whole from the side with the later write (#352 F-057).
+pub fn merge(
+    store: &Arc<Store>,
+    stack: &LayerStackRecord,
+    left: &str,
+    right: &str,
+    name: &str,
+    message: Option<&str>,
+    units: &[MergeUnit],
+) -> Answer {
     let admission = crate::history::admission::SharedIntent::begin(
         store.history(),
         layerfs_history::records::GcIntentKind::Merge,
         stack,
         Some(name),
     )?;
-    match merge_inner(store, stack, request) {
+    match merge_inner(store, stack, left, right, name, message, units) {
         Ok(value) => {
             admission.release()?;
             Ok(value)
@@ -219,33 +410,29 @@ pub fn merge(store: &Arc<Store>, stack: &LayerStackRecord, request: &Merge<'_>) 
     }
 }
 
-fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) -> Answer {
-    let (left, right, message, units) = (merge.left, merge.right, merge.message, merge.units);
+fn merge_inner(
+    store: &Arc<Store>,
+    stack: &LayerStackRecord,
+    left: &str,
+    right: &str,
+    name: &str,
+    message: Option<&str>,
+    units: &[MergeUnit],
+) -> Answer {
     if left == right {
         return Err(invalid("merge takes two different sources"));
     }
     let admitted = Units::new(units).map_err(invalid)?;
-    let name = match merge.into {
-        Some(MAIN) => {
-            return Err(refuse(
-                "ReservedName",
-                "\"main\" names the project's main line",
-                SdkValue::Map(Vec::new()),
-            ))
-        }
-        Some(into) => into,
-        None if left == MAIN => {
-            return Err(invalid(
-                "main moves only by branch publish: publish the Branch, or merge into another Branch or a new one",
-            ))
-        }
-        None => left,
-    };
-    let existing = merge.into.is_none();
+    if name == MAIN {
+        return Err(refuse(
+            "ReservedName",
+            "\"main\" names the project's main line",
+            SdkValue::Map(Vec::new()),
+        ));
+    }
     let name = args::name(name)?;
     let (left_side, ln, left_branch) = side(store, stack, left)?;
     let (right_side, rn, _) = side(store, stack, right)?;
-    resolve::expect(store, stack, merge.expected, left, ln)?;
     let sources = SdkValue::List(vec![
         SdkValue::map([
             ("ref", SdkValue::text(left)),
@@ -264,45 +451,29 @@ fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) 
     } else {
         None
     };
-    let branch = match (&left_branch, existing) {
-        (Some(branch), true) => branch.id,
-        _ => BranchId::named(stack.id, &name),
-    };
     let request = |head| BranchMergeRequest {
         stack: stack.id,
-        branch,
+        branch: BranchId::named(stack.id, &name),
         name: name.clone(),
         sides: [(left_side, ln), (right_side, rn)],
         head,
     };
-    let write = |request: &BranchMergeRequest| match existing {
-        true => catalog.merge_into_branch(request),
-        false => catalog.merge_branch(request),
-    };
     if let Some((newer, older)) = newer {
-        // `left` already holds `right`: nothing moves
-        let unchanged = existing && newer == ln;
-        let (head, root) = match unchanged {
-            true => (ln, root(store, ln)?),
-            false => {
-                let snapshot = write(&request(MergeHead::Node(newer))).map_err(history)?;
-                (branch_node(&snapshot.branch), snapshot.effective_root)
-            }
-        };
+        let snapshot = catalog
+            .merge_branch(&request(MergeHead::Node(newer)))
+            .map_err(history)?;
         return Ok(SdkValue::map([
             ("kind", SdkValue::text("Merged")),
-            ("fastForward", SdkValue::Bool(!unchanged)),
-            ("unchanged", SdkValue::Bool(unchanged)),
+            ("fastForward", SdkValue::Bool(true)),
             ("branch", SdkValue::text(name.as_str())),
             (
                 "head",
-                SdkValue::opt_text(match head {
-                    NodeId::Commit(id) => Some(hex(id.as_slice())),
-                    NodeId::Layer(_) => None,
-                }),
+                SdkValue::opt_text(snapshot.branch.head_commit.map(|id| hex(id.as_slice()))),
             ),
-            ("commit", SdkValue::text(node_text(head))),
-            ("root", SdkValue::text(hex(root.as_bytes()))),
+            (
+                "root",
+                SdkValue::text(hex(snapshot.effective_root.as_bytes())),
+            ),
             ("sources", sources),
             ("mergeBase", SdkValue::text(node_text(older))),
             ("conflicts", SdkValue::List(Vec::new())),
@@ -403,7 +574,7 @@ fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) 
         return Err(refuse(
             "Conflict",
             format!(
-                "{left} + {right} conflict in {} file(s); nothing changed",
+                "{left} + {right} conflict in {} file(s); nothing was created",
                 merged.conflicts.len()
             ),
             SdkValue::map([
@@ -412,18 +583,6 @@ fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) 
                 (
                     "conflicts",
                     layerfs_bridge::sdk_values::conflicts(&merged.conflicts),
-                ),
-                (
-                    "paths",
-                    SdkValue::List(
-                        (merged.conflicts.iter().take(CONFLICT_PATHS))
-                            .map(|conflict| SdkValue::text(&conflict.path))
-                            .collect(),
-                    ),
-                ),
-                (
-                    "total",
-                    SdkValue::Int(i64::try_from(merged.conflicts.len()).unwrap_or(i64::MAX)),
                 ),
                 ("lww", lww),
                 (
@@ -510,19 +669,15 @@ fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) 
     })));
     // The merge's one publish write, timed on its own: its writer hold.
     let snapshot =
-        crate::telemetry::timed("branch.merge.publish", |_| write(&publish)).map_err(history)?;
+        crate::telemetry::timed("branch.merge.publish", |_| catalog.merge_branch(&publish))
+            .map_err(history)?;
     Ok(SdkValue::map([
         ("kind", SdkValue::text("Merged")),
         ("fastForward", SdkValue::Bool(false)),
-        ("unchanged", SdkValue::Bool(false)),
         ("branch", SdkValue::text(name.as_str())),
         (
             "head",
             SdkValue::opt_text(snapshot.branch.head_commit.map(|id| hex(id.as_slice()))),
-        ),
-        (
-            "commit",
-            SdkValue::text(node_text(branch_node(&snapshot.branch))),
         ),
         ("root", SdkValue::text(hex(merged.root.0.as_bytes()))),
         ("sources", sources),
@@ -542,38 +697,30 @@ fn merge_inner(store: &Arc<Store>, stack: &LayerStackRecord, merge: &Merge<'_>) 
     ]))
 }
 
-/// Publishes the Commit `at` (an id or a prefix; the Branch's head when
-/// absent) of `branch` as main's next Layer.
+/// Publishes `commit` (the Branch's head when absent) of `branch` as main's
+/// next Layer.
 ///
 /// By default the publication is refused `HeadMoved` when it would replace a
 /// Layer main gained since the Branch forked; a Branch may publish again over
-/// its own earlier Layers. `expected` (main's head, an id or a prefix), when
-/// given, is a strict compare-and-swap expectation, and `force` deliberately
-/// keeps the older overwrite-only behavior. A Commit already published
-/// answers `UpToDate` whichever check would refuse it, and a tree main
-/// already holds answers `NoChanges`. A refusal names main's head as
-/// `head`. Nothing is written on a refusal.
+/// its own earlier Layers. `expected_base` and `expected_head` (the Branch's
+/// head), when given, are strict compare-and-swap expectations, and `force`
+/// deliberately keeps the older overwrite-only behavior. A Commit already
+/// published answers `UpToDate` whichever check would refuse it, and a tree
+/// main already holds answers `NoChanges`. Nothing is written on a refusal.
 pub fn publish(
     store: &Arc<Store>,
     stack: &LayerStackRecord,
     branch: &layerfs_history::BranchRecord,
-    at: Option<&str>,
-    expected: Option<&str>,
+    commit: Option<NodeId>,
+    expected_base: Option<LayerId>,
+    expected_head: Option<CommitId>,
     force: bool,
 ) -> Answer {
-    let commit = match at {
-        Some(at) => {
-            let node = resolve::commit(store, stack, at)?.node();
-            let name = branch.name.as_str();
-            match super::listing::held(store, name, branch_node(branch), node)? {
-                NodeId::Commit(commit) => commit,
-                NodeId::Layer(_) => {
-                    return Err(invalid(format!(
-                        "{at} is one of main's publications, which main already holds: --at takes a Commit of {name} (`layerfs commit list` lists them)"
-                    )))
-                }
-            }
-        }
+    let commit = match commit {
+        Some(node) => match node {
+            NodeId::Commit(commit) => commit,
+            NodeId::Layer(_) => return Err(invalid("publish takes a Commit")),
+        },
         None => branch.head_commit.ok_or_else(|| {
             refuse(
                 "NoCommit",
@@ -582,17 +729,11 @@ pub fn publish(
             )
         })?,
     };
-    let expected_base = match expected {
-        None => None,
-        Some(text) => match resolve::commit(store, stack, text)?.node() {
-            NodeId::Layer(layer) => Some(layer),
-            NodeId::Commit(_) => {
-                return Err(invalid(
-                    "expected names main's head, a publication of main, not a Branch's Commit",
-                ))
-            }
-        },
-    };
+    if let Some(expected) = expected_head {
+        if branch.head_commit != Some(expected) {
+            return Err(moved_head(branch, expected, branch.head_commit));
+        }
+    }
     // A caller-named base is a strict compare-and-swap: main must still be
     // the Layer the caller read. Without one, publishing is allowed while it
     // cannot drop a Layer main gained since the Branch forked: main is still
@@ -666,13 +807,6 @@ pub fn publish(
                 ),
                 ("overwrote", SdkValue::List(overwrote)),
                 ("overwroteHasMore", SdkValue::Bool(more)),
-                (
-                    "previous",
-                    SdkValue::opt_text(
-                        (stack.head_layer != branch.base_layer)
-                            .then(|| hex(stack.head_layer.as_slice())),
-                    ),
-                ),
             ])
         }
         AddLayerOutcome::UpToDate { layer } => up_to_date(layer),
@@ -728,21 +862,15 @@ fn moved_base(expected: LayerId, actual: LayerId) -> SdkRefusal {
     refuse(
         "HeadMoved",
         format!(
-            "main is at {}, not the expected {}; read main again and publish, or pass force to overwrite",
-            prefix(NodeId::Layer(actual)),
-            prefix(NodeId::Layer(expected)),
+            "main is at {}, not the expected base {}; read main again and publish, or pass force to overwrite",
+            short(NodeId::Layer(actual)),
+            short(NodeId::Layer(expected)),
         ),
         SdkValue::map([
             ("expectedBase", SdkValue::text(hex(expected.as_slice()))),
             ("actualBase", SdkValue::text(hex(actual.as_slice()))),
-            ("head", SdkValue::text(hex(actual.as_slice()))),
         ]),
     )
-}
-
-/// The first 12 characters of a node's id: a prefix the calls take back.
-fn prefix(node: NodeId) -> String {
-    node_text(node)[..12].to_owned()
 }
 
 /// A refusal for a publication that would replace main's head with a tree
@@ -751,16 +879,43 @@ fn skipped(branch: &layerfs_history::BranchRecord, base: LayerId, head: LayerId)
     refuse(
         "HeadMoved",
         format!(
-            "publishing {} would skip main's publication {}: its fork point is {}; merge main into {} and publish again, or pass force to overwrite",
+            "publishing {} would skip main's Layer {}: its fork point is {}; merge {} with main into a new Branch and publish that, or pass force to overwrite",
             branch.name.as_str(),
-            prefix(NodeId::Layer(head)),
-            prefix(NodeId::Layer(base)),
+            short(NodeId::Layer(head)),
+            short(NodeId::Layer(base)),
             branch.name.as_str(),
         ),
         SdkValue::map([
             ("expectedBase", SdkValue::text(hex(base.as_slice()))),
             ("actualBase", SdkValue::text(hex(head.as_slice()))),
-            ("head", SdkValue::text(hex(head.as_slice()))),
+        ]),
+    )
+}
+
+/// A refusal for a Branch head that is not the expected Commit.
+fn moved_head(
+    branch: &layerfs_history::BranchRecord,
+    expected: CommitId,
+    actual: Option<CommitId>,
+) -> SdkRefusal {
+    let (shown, detail) = match actual {
+        Some(actual) => (
+            short(NodeId::Commit(actual)),
+            SdkValue::text(hex(actual.as_slice())),
+        ),
+        None => ("no Commit".to_owned(), SdkValue::Null),
+    };
+    refuse(
+        "HeadMoved",
+        format!(
+            "{} head moved: expected {} but it is {}; read the Branch again and publish the Commit you expect",
+            branch.name.as_str(),
+            short(NodeId::Commit(expected)),
+            shown,
+        ),
+        SdkValue::map([
+            ("expectedHead", SdkValue::text(hex(expected.as_slice()))),
+            ("actualHead", detail),
         ]),
     )
 }

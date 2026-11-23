@@ -1,7 +1,6 @@
 //! Bounded kernel control over a direct Store and one local overlay owner.
 #[cfg(target_os = "linux")]
 mod attach;
-mod changed;
 mod cleanup;
 #[cfg(target_os = "linux")]
 mod detach;
@@ -18,7 +17,6 @@ mod kernel;
 mod observation;
 mod operations;
 mod registry;
-mod resolve;
 mod serve;
 #[cfg(target_os = "linux")]
 mod serving;

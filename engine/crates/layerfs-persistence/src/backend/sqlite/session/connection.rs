@@ -32,7 +32,7 @@ pub struct ConnectionProfile {
     pub compile_options: Vec<String>,
     /// Selected journal mode, checked on every relevant connection.
     pub journal_mode: String,
-    /// FULL is 2 (Durable); NORMAL is 1 (Normal).
+    /// FULL is 2; OFF is 0 for Disposable.
     pub synchronous: i64,
     /// Foreign keys must be enabled.
     pub foreign_keys: i64,
@@ -40,12 +40,6 @@ pub struct ConnectionProfile {
     pub fullfsync: i64,
     /// macOS checkpoint full-sync selection.
     pub checkpoint_fullfsync: i64,
-    /// The same setting read back from the checkpoint thread's connection,
-    /// which runs the routine PASSIVE passes of a Normal session: 0, plain
-    /// `fsync`; the idle and last-close checkpoints run on this session's
-    /// connection (`checkpoint_fullfsync` above). `None` when the session has
-    /// no checkpoint thread (read-only and diagnostic sessions).
-    pub checkpoint_thread_checkpoint_fullfsync: Option<i64>,
     /// Database page bytes.
     pub page_size: i64,
     /// Stored page-reclamation mode: 0 for retained Stores, 2 for new acquisition Stores.
@@ -163,7 +157,7 @@ pub(crate) struct State {
 }
 pub(crate) struct Session {
     pub(crate) diagnostic: bool,
-    /// A writable Normal session's checkpoint thread; dropped first, so
+    /// A writable Disposable session's checkpoint thread; dropped first, so
     /// it ends before the session's own connection closes.
     pub(crate) background: Option<super::background::Checkpointer>,
     pub(crate) admission: crate::backend::admission::Admission,
@@ -201,7 +195,7 @@ impl Session {
             path,
             false,
             false,
-            SqlitePersistenceProfile::Normal,
+            SqlitePersistenceProfile::Disposable,
             crate::SqlitePackLayout::Monolithic,
             crate::SqliteAcquisitionSchema::Absent,
             true,
@@ -261,12 +255,16 @@ impl Session {
             // Versions 1 to 6 kept inode values in pooled packs behind an
             // ordinal catalogue. Versions 16 to 18 and 22 to 24 (schema
             // version 1) kept one row per inode value and binding hint;
-            // schema version 2 (#91) keeps them in blocks. Such a Store is
-            // refused here, never misread or converted.
+            // versions 36 to 38 and 42 to 44 (schema version 2) keep them in
+            // blocks but carry the removed Store-side authority tables;
+            // versions 39 to 41 and 45 to 47 (schema version 3) are the lean
+            // phase-3 schema. A Store of version 1 or 2 is refused here,
+            // never misread or silently converted.
             let acquisition = match stored {
-                36..=38 => crate::SqliteAcquisitionSchema::Absent,
-                42..=44 => crate::SqliteAcquisitionSchema::Tables,
+                39..=41 => crate::SqliteAcquisitionSchema::Absent,
+                45..=47 => crate::SqliteAcquisitionSchema::Tables,
                 16..=18 | 22..=24 => return Err(BackendError::SchemaVersion1),
+                36..=38 | 42..=44 => return Err(BackendError::SchemaVersion2),
                 _ => {
                     return Err(if diagnostic {
                         BackendError::UnsupportedSchemaVersion(stored)
@@ -276,8 +274,8 @@ impl Session {
                 }
             };
             let layout = match stored - acquisition.version_offset() {
-                36 => crate::SqlitePackLayout::Monolithic,
-                37 => crate::SqlitePackLayout::GroupRows,
+                39 => crate::SqlitePackLayout::Monolithic,
+                40 => crate::SqlitePackLayout::GroupRows,
                 _ => crate::SqlitePackLayout::GroupRowsIndexed,
             };
             (layout, acquisition)
@@ -296,7 +294,7 @@ impl Session {
             .iter()
             .map(|r| r.get::<String>(0))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut profile = ConnectionProfile {
+        let profile = ConnectionProfile {
             persistence: selected,
             pack_layout: layout,
             acquisition,
@@ -310,7 +308,6 @@ impl Session {
             foreign_keys: integer("foreign_keys")?,
             fullfsync: integer("fullfsync")?,
             checkpoint_fullfsync: integer("checkpoint_fullfsync")?,
-            checkpoint_thread_checkpoint_fullfsync: None,
             page_size: integer("page_size")?,
             auto_vacuum: integer("auto_vacuum")?,
             wal_autocheckpoint: integer("wal_autocheckpoint")?,
@@ -339,16 +336,9 @@ impl Session {
             writer.release().map_err(|_| BackendError::Unknown)?;
         }
         super::thread_work::add(&work.borrow());
-        let background = match (writable && selected.background_checkpoint())
+        let background = (writable && selected.background_checkpoint())
             .then(|| super::background::Checkpointer::start(path, selected.synchronous()))
-            .transpose()?
-        {
-            Some((background, checkpoint_fullfsync)) => {
-                profile.checkpoint_thread_checkpoint_fullfsync = Some(checkpoint_fullfsync);
-                Some(background)
-            }
-            None => None,
-        };
+            .transpose()?;
         // §10: the record every later transaction is fenced against.
         let identity = FileIdentity::capture(path).map_err(|_| BackendError::Integrity)?;
         Ok(Self {

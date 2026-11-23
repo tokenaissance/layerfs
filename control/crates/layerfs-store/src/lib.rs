@@ -16,20 +16,17 @@ pub mod call;
 pub mod calls;
 pub mod compact;
 pub mod diagnostic;
-pub mod get;
 #[doc(hidden)]
 pub mod identity;
-pub mod intent;
 #[doc(hidden)]
 pub mod lease;
-pub mod list;
-mod live;
-pub mod observed;
+mod list;
 #[doc(hidden)]
 pub mod open;
 pub mod open_args;
 #[doc(hidden)]
 pub mod place;
+pub mod place_view;
 pub mod postgresql;
 #[doc(hidden)]
 pub mod project;
@@ -42,14 +39,22 @@ pub mod resolve;
 #[doc(hidden)]
 pub mod service;
 pub mod sqlite;
-pub mod state;
-mod stats;
+pub mod stats;
+mod status;
 #[doc(hidden)]
 pub mod unknown;
-pub mod words;
 
 /// The Store connection reaper (not lifecycle, #535 D11), for its test.
 #[doc(hidden)]
 pub use open::close_idle;
 pub use record::stores;
 pub use related::Related;
+
+/// The Store get an update answers with, kept in the kind-neutral root so
+/// the PostgreSQL module does not import the SQLite module.
+pub(crate) fn get_after_update(
+    home: &std::path::Path,
+    name: &layerfs_home::names::StoreName,
+) -> layerfs_home::outcome::Outcome {
+    crate::sqlite::family::get(home, name)
+}

@@ -46,7 +46,7 @@ API_MOUNT_TARGETS = {"kernel_mount_routes", "kernel_application", "observed_appl
 # (package, test target): run seconds on the macOS host, 2026-10-23.
 SLOW = {
     # Native CLI forwarded cancellation, phase 1 verification, 2026-11-09.
-    ("layerfs-cli", "cancel_forwarded"): 6.09,
+    ("layerfs-cli", "exec_cancel_forwarded"): 6.09,
     # Independent overwrite closure and interruption fixture (4096 Commits).
     ("layerfs-persistence", "diagnostic_overwrite"): 15.33,
     ("layerfs-nfs", "helper_deadline"): 60.1,
@@ -60,8 +60,6 @@ SLOW = {
     ("layerfs-control", "observed_application"): 6.30,
     # Linux functional run at the relocated tree, 2026-10-27.
     ("layerfs-persistence", "writer_admission"): 9.74,
-    # Two cases each hold a lane 3 s (finding #20), macOS host, 2026-11-23.
-    ("layerfs-persistence", "diagnostics_during_lane"): 6.06,
     ("layerfs-store-service", "scale_lineage_cap"): 24.3,
     ("layerfs-store-service", "sdk_merge_scale"): 23.8,
     ("layerfs-daemon", "complete_installed_roots"): 9.0,
@@ -80,9 +78,6 @@ SLOW = {
     # History closures of 9,000 Commits and 24,000 Branches against the one
     # recursive statement (layerfs-project#41), 2026-11-18.
     ("layerfs-persistence", "kept_node_closure"): 5.32,
-    # A provider call waits out its own 10 s and 30 s bounds (cp-platform
-    # fix of tool::run's deadline), estimated from those bounds, 2026-11-23.
-    ("layerfs-platform", "machine_deadline"): 31.0,
 }
 
 # (package, test target): build CPU seconds in the cold mold build of CI run

@@ -9,7 +9,6 @@ mod commit;
 mod digests;
 mod epoch;
 mod hints;
-mod identity_range;
 mod kept;
 mod layerstack;
 mod lineage;

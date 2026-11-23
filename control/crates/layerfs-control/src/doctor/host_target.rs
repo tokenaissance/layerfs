@@ -1,26 +1,17 @@
-//! The home's own checks (call surface 2.0, `calls.json` `doctor.checks.home`),
-//! in the order they run: `home.build`, `home.prerequisites`, `home.layout`,
-//! `home.records`, `home.bundle`, `home.native_daemon`, `home.artifacts`,
-//! `home.capacity`. Each observes; none opens or changes the
-//! home. A check that does not apply is left out: a home not made yet has
-//! no layout or records; the bundle is checked only where a recorded
-//! machine needs it; a check that waits on an unreadable layout or record
-//! set is not made.
-use super::records::Findings;
+//! Observational host diagnosis: installation, local records and local capacity.
+use super::report::Findings;
 use super::target::{Budget, Checks};
+use layerfs_bridge::control::SdkValue;
 use layerfs_home::home::{detect, Layout};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[path = "host_capacity.rs"]
-mod disk;
+mod capacity;
 #[path = "host_install.rs"]
 mod install;
 #[path = "host_inventory.rs"]
 mod inventory;
-
-const LAYOUT: &str = "home.layout";
-const RECORDS: &str = "home.records";
 
 pub(super) fn diagnose(
     home: &Path,
@@ -28,76 +19,86 @@ pub(super) fn diagnose(
     budget: &Budget,
     checks: &mut Checks,
 ) {
-    install::build(home, checks);
-    install::prerequisites(checks);
-    let scanned = layout(home, budget, checks);
-    if let Some(records) = &scanned {
-        install::bundle(records, checks);
-    }
+    install::identity(checks);
     install::native_daemon(home, build, checks);
-    if let Some(records) = &scanned {
-        install::artifacts(records, budget, checks);
-    }
-    disk::check(home, budget, checks);
-}
-
-/// `home.layout`, then `home.records` on a home whose layout reads: what
-/// the records scan read, when it gave a stable verdict.
-fn layout(home: &Path, budget: &Budget, checks: &mut Checks) -> Option<super::scan::Scanned> {
+    capacity::check(home, budget, checks);
     if budget.expired() {
-        checks.timeout(LAYOUT, "its time ran out before the home was read");
-        return None;
+        checks.unknown("host.layout", "Deadline expired before inspecting the home");
+        return;
     }
-    // `detect` refuses only a read the system refused, which may be a real
-    // 2.0 home: the OS error, and no fix (RC-8)
     let layout = match detect(home) {
         Ok(layout) => layout,
-        Err(refusal) => {
-            checks.fail(LAYOUT, refusal.message);
-            return None;
+        Err(_) => {
+            checks.fail(
+                "host.layout",
+                "Home layout is unreadable, malformed or unsupported",
+            );
+            checks.blocked(
+                "host.records",
+                "Home layout could not be established",
+                "host.layout",
+            );
+            install::without_inventory(checks, true);
+            return;
         }
     };
+    checks.evidence(
+        "host.build",
+        SdkValue::map([
+            ("home", SdkValue::text(home.display().to_string())),
+            ("version", SdkValue::text(env!("CARGO_PKG_VERSION"))),
+            ("os", SdkValue::text(std::env::consts::OS)),
+            ("arch", SdkValue::text(std::env::consts::ARCH)),
+        ]),
+    );
     match layout {
-        // a home not made yet: nothing to read
-        Layout::Empty => None,
-        Layout::Foreign => {
-            checks.fail(
-                LAYOUT,
-                "not a LayerFS 2.0 home: this build writes nothing in it; move it aside and make a new home",
+        Layout::Empty => {
+            checks.skip(
+                "host.layout",
+                "Home is not initialized; no home was created",
             );
-            checks.fix(LAYOUT, layerfs_home::home::layout::foreign_fix(home));
-            None
+            checks.skip("host.records", "No initialized home to inspect");
+            install::without_inventory(checks, false);
+        }
+        Layout::Old => {
+            checks.warning(
+                "host.layout",
+                "LayerFS 1.1.0 home requires explicit import; no conversion performed",
+            );
+            checks.skip(
+                "host.records",
+                "Current-layout checks do not apply to this home",
+            );
+            install::without_inventory(checks, false);
+        }
+        Layout::Previous(_) => {
+            checks.warning(
+                "host.layout",
+                "Layout 2 home requires conversion; no conversion performed",
+            );
+            observed(home, budget, checks, true);
         }
         Layout::Current(_) => {
-            checks.pass(LAYOUT, "a current-layout home this build reads");
-            observed(home, budget, checks)
+            checks.pass("host.layout", "Current home layout is readable");
+            observed(home, budget, checks, false);
         }
     }
 }
 
-/// `home.records`: every record, with the home's record set fingerprinted
-/// before and after so a home that changed meanwhile gives no verdict.
-fn observed(home: &Path, budget: &Budget, checks: &mut Checks) -> Option<super::scan::Scanned> {
+fn observed(home: &Path, budget: &Budget, checks: &mut Checks, previous: bool) {
     let before = inventory::fingerprint(home, budget);
     if before.is_err() {
-        // a home folder the inventory will not walk (a symlinked `store/`)
-        // is the records scan's own finding: report it when the scan names it
-        let mut findings = Findings::default();
-        let named = super::scan::scan(home, &mut findings).is_ok();
-        if named && !findings.is_empty() {
-            findings.publish(RECORDS, checks);
-        } else {
-            checks.unknown(
-                RECORDS,
-                "the home's records could not all be read; no verdict",
-            );
-        }
-        return None;
+        checks.unknown("host.records", "Management record metadata could not be observed completely; no consistency scan attempted");
+        install::without_inventory(checks, true);
+        return;
     }
     let mut findings = Findings::default();
     let mut scanned = None;
     let result = if budget.expired() {
         Err(())
+    } else if previous {
+        super::convert::check(home, &mut findings);
+        Ok(())
     } else {
         super::scan::scan(home, &mut findings)
             .map_err(|_| ())
@@ -109,26 +110,57 @@ fn observed(home: &Path, budget: &Budget, checks: &mut Checks) -> Option<super::
             })
     };
     let after = inventory::fingerprint(home, budget);
-    if budget.expired() || after.is_err() || before.ok() != after.ok() {
-        checks.unknown(
-            RECORDS,
-            "the home's records changed while they were read, or its time ran out; no verdict",
-        );
-        return None;
+    if budget.expired() || before.is_err() || after.is_err() || before.ok() != after.ok() {
+        checks.unknown("host.records", "Record inventory changed or could not be observed completely; no stable consistency verdict");
+        install::without_inventory(checks, true);
+        return;
     }
     if result.is_err() {
-        checks.unknown(RECORDS, "a record or lease could not be read; no verdict");
-        return None;
-    }
-    if findings.is_empty() {
-        checks.pass(
-            RECORDS,
-            "every record reads: references, file modes, leases and operations",
+        checks.unknown(
+            "host.records",
+            "Local record or lease inspection could not complete",
         );
-    } else {
-        findings.publish(RECORDS, checks);
+        install::without_inventory(checks, true);
+        return;
     }
-    scanned
+    publish(findings, checks);
+    if let Some(records) = scanned {
+        install::artifacts(&records, budget, checks);
+    } else {
+        install::without_inventory(checks, false);
+    }
+    checks.skip(
+        "host.remote",
+        "Worker connections and remote transfer files are outside host scope",
+    );
+}
+
+fn publish(findings: Findings, checks: &mut Checks) {
+    let report = findings.to_sdk();
+    let Some(SdkValue::List(rows)) = report.get("findings") else {
+        return;
+    };
+    if rows.is_empty() {
+        checks.pass(
+            "host.records",
+            "Local record, permission, reference, intent and lease checks found no problems",
+        );
+        return;
+    }
+    for row in rows {
+        let message = row.get_text("message").unwrap_or("Local record issue");
+        if row.get_text("severity") == Some("error") {
+            checks.fail("host.records", message);
+        } else {
+            checks.warning("host.records", message);
+        }
+        if let Some(fix) = row.get_text("fix") {
+            checks.fix("host.records", fix);
+        }
+        if let Some(entity) = row.get("entity") {
+            checks.evidence("host.records", entity.clone());
+        }
+    }
 }
 
 pub(super) fn executable(path: &Path) -> bool {

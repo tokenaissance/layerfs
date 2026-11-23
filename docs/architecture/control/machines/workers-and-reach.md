@@ -32,6 +32,7 @@ request carries what its operation needs. Which calls take a worker is the
             0600 via stdin; end an earlier worker; start detached as root:
             LAYERFS_WORKER_LISTEN=<bind>:7070
             LAYERFS_WORKER_SECRET=/layerfs/state/secret
+            LAYERFS_WORKER_INCARNATION=<the start's ordered token>
             >> /layerfs/data/log/worker.log   (rotated first, see below)
  4 ready    guest /proc/net/tcp listens on the port AND host 127.0.0.1:<port>
             accepts; every 200 ms, at most 60 s
@@ -41,13 +42,33 @@ request carries what its operation needs. Which calls take a worker is the
 | Step | Failure | Source |
 | --- | --- | --- |
 | 2 | the guest keeps user namespaces: `Unsupported` | [`setup/worker.rs`](../../../../control/crates/layerfs-platform/src/setup/worker.rs) |
-| 2 | a bundle whose `bundle.json` has no file identities is refused `InvalidInput`, "rebuild it with `python3 tools/linux_bundle.py`"; an unchanged Sandbox image is never recopied; an interrupted copy is never sealed | [`setup/artifacts.rs`](../../../../control/crates/layerfs-platform/src/setup/artifacts.rs) |
+| 2 | an unchanged Sandbox image is never recopied; an interrupted copy is never sealed | [`setup/artifacts.rs`](../../../../control/crates/layerfs-platform/src/setup/artifacts.rs) |
 | 4 | a worker that ends meanwhile: `Failed` with the last 8 lines of `worker.log`. On `docker` the worker's end stops its container, which `docker exec` cannot enter: the log is copied out of the stopped container (`docker cp`, which reads its data volume) into `machine/docker/worker.log.ended`, read and removed | [`setup/worker.rs`](../../../../control/crates/layerfs-platform/src/setup/worker.rs), [`docker/power.rs`](../../../../control/crates/layerfs-platform/src/platforms/docker/power.rs) |
 
 The `docker` machine does steps 2 and 3 in its own container start (bundle
 mounted read-only, entry script makes the folders and the log and writes
 `/layerfs/state/worker.pid`, no sysctl write);
 step 4 is shared ([Platforms](platforms.md#docker-platformsdocker)).
+
+### The start order and the ordered incarnation
+
+`machine.start` holds the machine's `start.lock` and, before launching a
+worker, stops the one it recorded and confirms both the provider state and
+the recorded endpoint say it is gone. Only then does it mint the ordered
+`p1:worker:<milliseconds>:<nonce>` incarnation, write it into the home
+`MachineRecord.incarnation`, and pass it to the launched worker as
+`LAYERFS_WORKER_INCARNATION`; `machine.create` writes the same field before
+its provider creates the worker. The worker records the value in
+`worker-incarnation.json` under its root before it serves, and every mount
+intent it places carries it. After the worker answers, the host reconciles
+the Stores on **that machine** with the value only when `worker.ping`
+reports the same value; a start that cannot stop the old worker, record the
+token or read it back fails before any intent is settled. A home restore
+that brings back an older `MachineRecord` therefore stays uncertain: the
+reported value differs and the reconcile is skipped, so no live owner is
+marked dead. An old worker started without the setting mints its own token,
+which the host records only when the worker reports it; a record without
+`incarnation` is no place proof, never death.
 
 ### The worker's log
 
@@ -61,6 +82,8 @@ output to `/layerfs/data/log/worker.log` (`$LAYERFS_WORKER_LOG`; folder
 ```text
  launcher (VM launch script, docker's entry), once no earlier worker runs
    mkdir -p /layerfs/data/log
+   /layerfs/state/worker.log of an older build, when there is no log yet
+       -> moved to /layerfs/data/log/worker.log
    worker.log larger than 16 MiB -> mv -f to worker.1.log (replaces it)
    append "layerfs worker: launched <UTC time>"
    start the worker with  >> /layerfs/data/log/worker.log 2>&1
@@ -100,11 +123,11 @@ output to `/layerfs/data/log/worker.log` (`$LAYERFS_WORKER_LOG`; folder
 | `native` (macOS, Linux) | no worker | calls run in the caller's process |
 
 Every host-side address is loopback; the secret guards the worker on every
-bind address. `layerfs worker` reads its two settings, makes its root
-(`/layerfs/data`, or `LAYERFS_WORKER_ROOT` in tests) `0701`, sweeps its run
-root of what interrupted Sandbox starts and removals left (once, before it
-accepts; [Checks: leftovers](../doctor/checks.md#leftovers)) and serves
-until `machine.stop`: it never stops by itself
+bind address. `layerfs worker` reads its settings (`LAYERFS_WORKER_LISTEN`,
+`LAYERFS_WORKER_SECRET`, the optional `LAYERFS_WORKER_INCARNATION` and the
+test-only `LAYERFS_WORKER_ROOT`), makes its root (`/layerfs/data`, or
+`LAYERFS_WORKER_ROOT` in tests) `0701` and serves until `machine.stop`: it
+never stops by itself
 ([`layerfs-cli/src/worker.rs`](../../../../api/crates/layerfs-cli/src/worker.rs)).
 
 ## Protocol (`layerfs-machine/src/worker/`)
@@ -149,9 +172,7 @@ until `machine.stop`: it never stops by itself
 | answer lost (the connection closed: the operation panicked, or the caller read nothing for 30 s) | `Unknown`, "it may have run, and was not resent" | yes |
 | a read-only operation panicked before its first event | `Failed`, naming `worker.log` | yes |
 
-Only `Unreached` lets `machine start` (and `layerfs_machine::running`)
-start a machine, and then only when no worker is recorded or the provider
-reports the machine not running ([Lifecycle](#lifecycle)). A ping
+Only `Unreached` lets the caller start a machine before it sends. A ping
 waits at most 10 s; other operations wait as long as they run
 ([`worker/client.rs`](../../../../control/crates/layerfs-machine/src/worker/client.rs)).
 
@@ -162,10 +183,11 @@ waits at most 10 s; other operations wait as long as they run
 | `worker.ping` | `{kind: "worker", version, pid}`; `args.capacity` adds `free_disk` of the root's filesystem |
 | `store.call` | one Store method on `store/<name>/store.sqlite` under the root, holding the Store's lease there |
 | `store.compact` | one sqlite Store's compaction on `store/<name>/store.sqlite` under the root, holding the Store's lease there; `{ store, store_record }`, each phase sent as a `progress` event; an event that cannot be written does not end the run (spec S6, #42 D5) |
-| `store.file` | one step of a `store.move` (either direction), `store.remove`, stat or backup, with `progress` events for hashing steps |
-| `store.reach` | the check of this machine's connection to a PostgreSQL Store, for `store.update --machine` |
-| `store.diagnose`, `doctor.sandbox` | doctor's read-only observations |
-| `sandbox.host` | a Sandbox or Workspace host operation on the machine's own `native`, decoded into its typed request first; a `sandbox.create` sweeps the run root first ([Checks: leftovers](../doctor/checks.md#leftovers)) |
+| `store.file` | one step of a Store push, pull, remove, stat or backup, with `progress` events for hashing steps |
+| `store.reach` | the check of this machine's connection to a PostgreSQL Store, for `store.update --machine` and `store.status --machine` |
+| `store.diagnose`, `doctor.sandbox` | doctor's read-only observations; `doctor.sandbox` with `leftovers: true` is the bounded walk for what interrupted operations left under the root |
+| `doctor.fix` | removes one such leftover, named by kind and name (never a path), under its guard ([Checks](../doctor/checks.md#leftovers)) |
+| `sandbox.host` | a Sandbox or Workspace host operation on the machine's own `native`, decoded into its typed request first |
 | `inspect` | one read-only inspect request `{ kind, .. }` (a window of `worker.log` or of a Sandbox's `daemon.log`, overlay file sizes with the Sandbox's process and usage, the machine's stats, which Sandboxes' daemons run) on a helper thread, two at a time, answered within 6 s; the operation adds `worker: { version, pid, started_at, protocol, bundle }` to the request ([Inspection](../sandboxes/inspect.md)) |
 | `project.stage`, `project.init`, `project.export`, `project.delete`, `project.delete.admit`, `project.delete.entry`, `project.delete.release` | write one part of a folder copy; add it as a project; stream a pinned snapshot back; admit, mark, remove the entry of and release a project's deletion |
 | anything else | `InvalidInput`, "the worker has no operation …" |
@@ -256,11 +278,11 @@ it in the worker server's files alone and refuses a manifest that enables it.
 
 | Event | Effect | Source |
 | --- | --- | --- |
-| `machine.start` | a recorded worker that answers its secret counts as running (one of another build is refused `Unavailable`, recorded `outdated`); else, under `start.lock`, a recorded worker whose hello failed makes the provider be asked of the VM alone (`provider_within`, 10 s): a machine it reports running is recorded `broken` `not_answering` and refused `Unavailable`, `fix: layerfs machine stop <m> && layerfs machine start <m>` (`--force` while Sandboxes are recorded on it, the message naming how many and `layerfs machine doctor <m>`), since a start would end that worker and every Sandbox on it; one it cannot say of is refused `Unavailable`, fix its doctor. With no worker recorded, or a machine stopped, failed or missing, the start runs and checks the new hello (a stale bundle is `Unavailable`, naming `python3 tools/linux_bundle.py`) | [`endpoint.rs`](../../../../control/crates/layerfs-machine/src/endpoint.rs) |
+| `machine.start` | a recorded worker that answers its secret counts as running, whatever its build; else under `start.lock` stop and confirm the old worker (its `incarnation` is minted only after), start with that token, check the new hello (a stale bundle is `Unavailable`, naming `python3 tools/linux_bundle.py`) | [`endpoint.rs`](../../../../control/crates/layerfs-machine/src/endpoint.rs) |
 | any other call | dials `worker.json` once; none recorded or no answer is `Unavailable` naming `layerfs machine start`; nothing is started; later steps of one operation reuse the endpoint | [`place.rs`](../../../../control/crates/layerfs-store/src/place.rs) |
 | `machine.stop` | refused `InUse` while Sandboxes are recorded; stops worker and VM, removes `worker.json` | [`power.rs`](../../../../control/crates/layerfs-machine/src/power.rs) |
 | idle | nothing: a worker has no idle stop | [`worker/mod.rs`](../../../../control/crates/layerfs-machine/src/worker/mod.rs) |
-| `machine.get --with live` (and `machine.list --with live`) | the provider is asked of the VM alone, then one hello to the recorded worker within 2 s: a running kernel whose worker does not answer (or with none recorded) is `broken` with `not_answering`, one of another build `outdated`; a bare connect is not enough, since a forward accepts with no worker. The platform's own `status` (`setup/calls.rs`, hello `{"ready":true}` within 2 s) says the same for its other callers: `Status::reason` is `not_answering` for a running kernel whose worker does not answer, never `stopped` | [`live.rs`](../../../../control/crates/layerfs-machine/src/live.rs), [`worker/client.rs`](../../../../control/crates/layerfs-machine/src/worker/client.rs) `hello_within`, [`setup/worker.rs`](../../../../control/crates/layerfs-platform/src/setup/worker.rs), [`setup/calls.rs`](../../../../control/crates/layerfs-platform/src/setup/calls.rs) |
+| `machine.status` | a running kernel whose worker does not answer the hello (secret, `{"ready":true}` within 2 s) is `stopped`; a bare connect is not enough, since a forward accepts with no worker | [`setup/worker.rs`](../../../../control/crates/layerfs-platform/src/setup/worker.rs), [`setup/calls.rs`](../../../../control/crates/layerfs-platform/src/setup/calls.rs) |
 
 ## Reach (`reach.rs`)
 

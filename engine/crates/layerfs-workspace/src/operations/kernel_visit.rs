@@ -273,10 +273,7 @@ impl KernelReadVisit {
     /// carries its descriptor as the observation's open or directory
     /// candidate.
     pub fn perform(&self, db: &Overlay) -> KernelReadOutcome {
-        let lookup = match &self.operation {
-            KernelReadOperation::Lookup { name, .. } => Some(name.as_bytes()),
-            _ => None,
-        };
+        let lookup = matches!(self.operation, KernelReadOperation::Lookup { .. });
         let decide = |rows: SourceRows<'_>, source: BaseSource| {
             let mut facts = carried(&self.facts, source);
             let mut round = 0;

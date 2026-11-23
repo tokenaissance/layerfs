@@ -609,7 +609,6 @@ fn commit_request(
         second_parent: None,
         meta: CommitMeta::new(CommitVia::Files),
         force: false,
-        required_head: None,
     }
 }
 
@@ -640,7 +639,6 @@ fn commit(
             second_parent: None,
             meta,
             force: false,
-            required_head: None,
         })
         .expect("commit")
     {

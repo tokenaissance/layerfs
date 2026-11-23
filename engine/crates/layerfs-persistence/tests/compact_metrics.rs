@@ -26,7 +26,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
     let path = temp.join("store.sqlite");
     let handles = SqliteHandles::create(
         PersistenceConfig::sqlite(path.clone())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         StoragePolicy::frozen_default(),
         &layerfs_history::HistoryCatalogConfig {
             binding_key: BINDING.to_vec(),
@@ -41,7 +41,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
 fn reopen(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         [71; 32],
     )

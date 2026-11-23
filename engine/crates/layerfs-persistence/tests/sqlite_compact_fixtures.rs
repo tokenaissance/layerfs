@@ -87,7 +87,7 @@ fn request(op: u8) -> CompactRequest {
 fn reopen(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         CURSOR,
     )
@@ -355,7 +355,6 @@ fn commit(
             second_parent: None,
             meta,
             force: false,
-            required_head: None,
         })
         .unwrap()
     {

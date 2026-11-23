@@ -74,17 +74,15 @@ fn call(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> Result<SdkValue, 
 /// record when it runs, sqlite Store `shop` on it and project `api`.
 fn home_records(home: &Path, machine: &str, platform: &str, worker: Option<(SocketAddr, &str)>) {
     let daemon = std::env::current_exe().unwrap().display().to_string();
-    // every 2.0 machine but `native` records its provider name (`vm_name`)
-    let vm_name = format!("layerfs-00000000-{machine}");
-    let mut fields = vec![
-        ("name", t(machine)),
-        ("platform", t(platform)),
-        ("daemon", t(&daemon)),
-    ];
-    if machine != "native" {
-        fields.push(("vm_name", t(&vm_name)));
-    }
-    write_record(&paths::machine_record(home, machine), &map(&fields)).unwrap();
+    write_record(
+        &paths::machine_record(home, machine),
+        &map(&[
+            ("name", t(machine)),
+            ("platform", t(platform)),
+            ("daemon", t(&daemon)),
+        ]),
+    )
+    .unwrap();
     if let Some((address, secret)) = worker {
         write_record(
             &paths::worker_record(home, machine),
@@ -99,7 +97,7 @@ fn home_records(home: &Path, machine: &str, platform: &str, worker: Option<(Sock
             ("kind", t("sqlite")),
             ("binding", SdkValue::Bytes(vec![7; 16])),
             ("cursor", SdkValue::Bytes(vec![8; 32])),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
             ("machine", t(machine)),
         ]),
     )
@@ -230,10 +228,10 @@ fn settle(home: &Path) {
 }
 
 /// A Store being pushed, as far as another call can see it: its record
-/// carries a running `store.move` intent and its lock is held. The lock is
+/// carries a running `store.push` intent and its lock is held. The lock is
 /// released when the answer drops.
 fn pushing(home: &Path) -> impl Drop {
-    let op = layerfs_home::op::Op::begin("store.move", "check", SdkValue::Null).unwrap();
+    let op = layerfs_home::op::Op::begin("store.push", "check", SdkValue::Null).unwrap();
     let record = layerfs_store::record::StoreRecord::read(home, "shop")
         .unwrap()
         .unwrap();
@@ -272,14 +270,13 @@ fn no_lease(root: &Path) {
 }
 
 /// Workspace `n` of Sandbox `s1`, recorded in `root`'s Sandbox folder as
-/// mounted at `path`, with no name: its handle, `s1:<path>`, as a mount
-/// entry names it (call surface 2.0).
+/// mounted at `path`.
 fn workspace(root: &Path, n: u8, path: &Path) -> String {
     let id = format!("{n:064x}");
     let record = WorkspaceRecord::mounted(id.clone(), None, "main", path.to_str().unwrap(), 0);
     let file = paths::workspace_dir(root, "s1").join(format!("{id}.json"));
     record.write(&file).unwrap();
-    format!("s1:{}", path.display())
+    id
 }
 
 fn p(path: &Path) -> SdkValue {
@@ -287,23 +284,22 @@ fn p(path: &Path) -> SdkValue {
 }
 
 fn entries(answer: &SdkValue) -> &[SdkValue] {
-    assert_eq!(answer.get_text("type"), Some("dir"), "{answer:?}");
-    match answer.get("items") {
+    assert_eq!(answer.get_text("kind"), Some("folder"), "{answer:?}");
+    match answer.get("entries") {
         Some(SdkValue::List(entries)) => entries,
         _ => panic!("{answer:?}"),
     }
 }
 
-/// Each entry as `<path below base> <type>[ <not_read>][ <role>][
-/// <workspace>]`.
+/// Each entry as `<path below base> <kind>[ <role>][ <workspace>]`.
 fn shown(answer: &SdkValue, base: &Path) -> Vec<String> {
     entries(answer)
         .iter()
         .map(|entry| {
             let path = Path::new(entry.get_text("path").unwrap());
             let below = path.strip_prefix(base).unwrap_or(path).display();
-            let mut line = format!("{below} {}", entry.get_text("type").unwrap());
-            for field in ["not_read", "role", "workspace"] {
+            let mut line = format!("{below} {}", entry.get_text("kind").unwrap());
+            for field in ["role", "workspace"] {
                 if let Some(value) = entry.get_text(field) {
                     line = format!("{line} {value}");
                 }
@@ -318,7 +314,7 @@ fn files_of(
     machine: &str,
     more: &[(&str, SdkValue)],
 ) -> Result<SdkValue, (String, String)> {
-    let mut asked = vec![("machine", t(machine)), ("detail", SdkValue::Bool(true))];
+    let mut asked = vec![("machine", t(machine))];
     asked.extend(more.iter().cloned());
     call(home, "machine.files", &asked)
 }
@@ -329,10 +325,7 @@ fn the_table_lists_the_call_quiet_with_a_path_and_its_options() {
     let args: Vec<_> = call.args.iter().map(|a| (a.name, a.optional)).collect();
     assert_eq!(args, [("machine", false), ("path", true)]);
     let options: Vec<_> = call.options.iter().map(|a| a.name).collect();
-    assert_eq!(
-        options,
-        ["depth", "limit", "cursor", "byte_offset", "byte_length"]
-    );
+    assert_eq!(options, ["depth", "cursor", "limit", "offset", "length"]);
     assert!(call.quiet);
     let table = layerfs_api::json::parse(&layerfs_api::table_json()).unwrap();
     let SdkValue::List(calls) = table else {
@@ -347,19 +340,20 @@ fn the_table_lists_the_call_quiet_with_a_path_and_its_options() {
         machine,
         [
             "list",
+            "platforms",
             "get",
             "images",
-            "load_image",
+            "load",
             "prune",
+            "status",
             "stats",
+            "space",
             "files",
-            "log",
             "start",
             "stop",
             "create",
             "remove",
-            "update",
-            "doctor"
+            "update"
         ]
     );
 }
@@ -388,10 +382,10 @@ fn a_native_machine_s_layerfs_folders_are_read_here_with_no_lock_line_or_write()
     assert_eq!(
         shown(&roots, &home),
         [
-            "store dir stores",
-            "sandbox dir sandbox_records",
-            "machine/native/run dir run_folders",
-            "log dir logs"
+            "store folder stores",
+            "sandbox folder sandbox_records",
+            "machine/native/run folder run_folders",
+            "log folder logs"
         ]
     );
     let run = files_of(
@@ -403,38 +397,24 @@ fn a_native_machine_s_layerfs_folders_are_read_here_with_no_lock_line_or_write()
     assert_eq!(
         shown(&run, &folder),
         [
-            "config dir restricted".to_owned(),
+            "config restricted".to_owned(),
             "daemon.log file log".to_owned(),
-            "overlay dir restricted".to_owned(),
-            "tmp dir".to_owned(),
+            "overlay restricted".to_owned(),
+            "tmp folder".to_owned(),
             "tmp/notes.txt file".to_owned(),
-            "tmp/project dir".to_owned(),
-            "workspaces dir".to_owned(),
-            format!("workspaces/1 dir mount {id}"),
+            "tmp/project folder".to_owned(),
+            "workspaces folder".to_owned(),
+            format!("workspaces/1 mount {id}"),
         ]
     );
-    // a page that ends early answers next_cursor, which continues it
-    let one = [
-        ("path", p(&folder)),
-        ("depth", SdkValue::Int(2)),
-        ("limit", SdkValue::Int(1)),
-    ];
-    let first = files_of(&home, "native", &one).unwrap();
-    assert_eq!(shown(&first, &folder), ["config dir restricted"]);
-    let cursor = first.get("next_cursor").cloned().unwrap();
-    assert!(matches!(cursor, SdkValue::Text(_)), "{first:?}");
-    let mut next = one.to_vec();
-    next.push(("cursor", cursor));
-    let second = files_of(&home, "native", &next).unwrap();
-    assert_eq!(shown(&second, &folder), ["daemon.log file log"]);
     let window = [
         ("path", p(&folder.join("tmp/notes.txt"))),
-        ("byte_offset", SdkValue::Int(5)),
-        ("byte_length", SdkValue::Int(4)),
+        ("offset", SdkValue::Int(5)),
+        ("length", SdkValue::Int(4)),
     ];
     assert_eq!(
         layerfs_api::json::print(&files_of(&home, "native", &window).unwrap()),
-        r#"{"items":null,"next_cursor":null,"text":"by a","binary":false,"size":null,"next_byte_offset":9,"type":"file"}"#
+        r#"{"kind":"file","size":18,"offset":5,"content":"by a","binary":false,"next":9}"#
     );
     for (path, code) in [
         (folder.join("config/daemon.setup"), "InvalidInput"),
@@ -492,21 +472,18 @@ fn a_worker_reads_its_machine_s_files_and_neither_side_changes() {
     assert_eq!(
         shown(&roots, &scratch),
         [
-            "data dir data",
-            "data/store dir stores",
-            "data/sandbox dir sandbox_records",
-            "data/machine/native/run dir run_folders",
-            "state dir state",
-            "/ dir machine"
+            "data folder data",
+            "data/store folder stores",
+            "data/sandbox folder sandbox_records",
+            "data/machine/native/run folder run_folders",
+            "state folder state",
+            "/ folder machine"
         ]
     );
     let run = files_of(&home, "box", &[("path", p(&folder.join("workspaces")))]).unwrap();
-    assert_eq!(
-        shown(&run, &folder),
-        [format!("workspaces/3 dir mount {id}")]
-    );
+    assert_eq!(shown(&run, &folder), [format!("workspaces/3 mount {id}")]);
     let state = files_of(&home, "box", &[("path", p(&scratch.join("state")))]).unwrap();
-    assert_eq!(shown(&state, &scratch), ["state/secret file restricted"]);
+    assert_eq!(shown(&state, &scratch), ["state/secret restricted"]);
     let (code, message) =
         files_of(&home, "box", &[("path", p(&scratch.join("state/secret")))]).unwrap_err();
     assert_eq!(code, "InvalidInput", "{message}");
@@ -518,7 +495,7 @@ fn a_worker_reads_its_machine_s_files_and_neither_side_changes() {
     )
     .unwrap();
     let dev = (entries(&top).iter()).find(|entry| entry.get_text("path") == Some("/dev"));
-    assert_eq!(dev.and_then(|dev| dev.get_text("not_read")), Some("system"));
+    assert_eq!(dev.and_then(|dev| dev.get_text("kind")), Some("system"));
     let (code, message) = files_of(&home, "box", &[("path", t("/dev/null"))]).unwrap_err();
     assert_eq!(code, "InvalidInput", "{message}");
     assert!(message.contains("is in a system folder"), "{message}");
@@ -574,8 +551,8 @@ fn a_forwarded_sandbox_s_workspaces_are_named_from_the_home_s_records() {
     assert_eq!(
         shown(&listed, &folder),
         [
-            format!("workspaces/10 dir mount {ten}"),
-            format!("workspaces/2 dir mount {two}"),
+            format!("workspaces/10 mount {ten}"),
+            format!("workspaces/2 mount {two}"),
         ]
     );
     assert_eq!(files(&home), before);

@@ -45,7 +45,6 @@ pub fn version() -> ExitCode {
             ),
         ]),
         false,
-        None,
     )
 }
 
@@ -64,13 +63,12 @@ pub fn help() -> ExitCode {
     };
     let mut switches = vec![
         switch("--text", all()),
-        switch("--detail", all()),
-        switch("--with", selected(|c| !c.with.is_empty())),
         switch("-h", all()),
         switch("--help", all()),
         switch("--", all()),
         switch("--progress", selected(|c| c.arg("on_progress").is_some())),
         switch("--stream", selected(|c| c.arg("stream").is_some())),
+        switch("--events", selected(|c| c.arg("stdout").is_some())),
         switch("--scope", all()),
         switch("--scope-project", all()),
         switch("--scope-branch", all()),
@@ -108,6 +106,26 @@ pub fn help() -> ExitCode {
         ])
     };
     let commands = vec![
+        command("doctor", &[], &["--text"]),
+        command("doctor host", &[], &["--timeout", "--text"]),
+        command("doctor machine", &["machine"], &["--timeout", "--text"]),
+        command("doctor sandbox", &["sandbox"], &["--timeout", "--text"]),
+        command(
+            "doctor store integrity",
+            &["store"],
+            &["--quick", "--timeout", "--text"],
+        ),
+        command(
+            "doctor store connection",
+            &["store"],
+            &["--timeout", "--text"],
+        ),
+        command(
+            "doctor backup connection",
+            &["bucket"],
+            &["--write-test", "--timeout", "--text"],
+        ),
+        command("import-env", &[], &[]),
         command("worker", &[], &[]),
         command("help", &["[family]", "[call]"], &["--json"]),
         command("--version", &[], &["--json"]),
@@ -120,6 +138,5 @@ pub fn help() -> ExitCode {
             ("switches", SdkValue::List(switches)),
         ]),
         false,
-        None,
     )
 }

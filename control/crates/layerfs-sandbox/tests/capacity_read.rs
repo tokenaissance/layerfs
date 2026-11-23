@@ -35,17 +35,6 @@ const DAEMON_INSTANCE: [u8; 32] = [3; 32];
 /// Names the homes of one test process apart.
 static HOMES: AtomicUsize = AtomicUsize::new(0);
 
-/// Held by each test that adds to the process's live Sandbox table
-/// (`registry::SANDBOXES`), so one test's live entry and its idle pooled
-/// connection are never counted by another's `end_idle_sessions`.
-static REGISTRY: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn registry() -> std::sync::MutexGuard<'static, ()> {
-    REGISTRY
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 fn tempdir(tag: &str) -> PathBuf {
     let sequence = HOMES.fetch_add(1, Ordering::Relaxed);
     let dir =
@@ -296,7 +285,6 @@ fn a_pooled_read_takes_no_second_connection() {
 
 #[test]
 fn the_worker_s_side_reads_the_capacity_model() {
-    let _registry = registry();
     let (endpoint, seen) = daemon(Behavior::Model);
     let home = tempdir("worker");
     std::fs::create_dir_all(&home).unwrap();
@@ -315,14 +303,7 @@ fn the_worker_s_side_reads_the_capacity_model() {
         message: Message::Absent,
         started: None,
     };
-    let answer = layerfs_sandbox::dispatch::call(host, HostCall::Capacity);
-    // the call left its Sandbox live in this process's table: it goes,
-    // with its pooled connection, before anything is asserted
-    let real = home.canonicalize().unwrap();
-    let live = layerfs_sandbox::registry::SANDBOXES.lock();
-    live.unwrap_or_else(|poisoned| poisoned.into_inner())
-        .retain(|directory, _| !directory.starts_with(&home) && !directory.starts_with(&real));
-    let answer = answer.unwrap();
+    let answer = layerfs_sandbox::dispatch::call(host, HostCall::Capacity).unwrap();
     let model = CapacityModel::parse(&answer);
     assert_eq!(model.admission.pool_vacant, 0, "{answer:?}");
     assert_eq!(model.admission.reserved_vacant, 1, "{answer:?}");
@@ -357,7 +338,6 @@ fn an_exiting_process_ends_its_idle_sessions() {
 #[test]
 fn a_process_ends_the_sessions_of_the_sandboxes_it_reached() {
     use layerfs_sandbox::registry::{end_idle_sessions, SandboxState, SANDBOXES, SESSION_END};
-    let _registry = registry();
     let (endpoint, seen) = daemon(Behavior::Model);
     let dial = dial(endpoint);
     let first = dial.open().unwrap();
@@ -392,7 +372,7 @@ fn ending_idle_sessions_leaves_a_lent_connection_alone() {
     let dial = dial(endpoint);
     let first = dial.open().unwrap();
     let controls = Controls::new(first, dial);
-    let mut lease = controls.lend().unwrap();
+    let mut lease = controls.lend().unwrap().0;
     assert_eq!(
         controls.end_idle(Instant::now() + Duration::from_secs(2)),
         0
@@ -434,7 +414,7 @@ fn a_fenced_connection_is_not_lent_again() {
     let first = dial.open().unwrap();
     let controls = Controls::new(first, dial);
     {
-        let lease = controls.lend().unwrap();
+        let lease = controls.lend().unwrap().0;
         // the fence's end, outside any exchange: the channel is shut down
         // while this `Control` never saw a call fail, which is the window
         // between a returned reply and `drop(fence)`
@@ -457,7 +437,7 @@ fn a_quarantined_connection_attempts_nothing() {
     let dial = dial(endpoint);
     let first = dial.open().unwrap();
     let controls = Controls::new(first, dial);
-    let mut lease = controls.lend().unwrap();
+    let mut lease = controls.lend().unwrap().0;
     lease.close_handle().unwrap().close().unwrap();
     // the call a pooled lease would make next: refused before sending, so it
     // is not an attempt whose effect is unknown

@@ -170,9 +170,7 @@ impl KernelWindow {
         if self.local.is_none() && self.base.is_none() {
             self.base = match base.ok_or(NO_BASE)?.inode(serial) {
                 Ok(found) => Some(found.value),
-                // No local row and no inode at the root the visit named: an
-                // install dropped the serial the kernel still holds.
-                Err(ContentError::PathNotFound) => return Err(OverlayError::Stale.into()),
+                Err(ContentError::PathNotFound) => return Ok(Err(Refusal::Missing)),
                 Err(error) => return Err(error.into()),
             };
         }

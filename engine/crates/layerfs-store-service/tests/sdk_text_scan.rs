@@ -140,14 +140,11 @@ fn reference_read(
     let requested = end.unwrap_or(9_007_199_254_740_991);
     let end = requested.min(start + 1999);
     let (mut content, mut next, mut clipped, mut last) = (String::new(), None, false, None);
-    // a line past the asked end is the next line of a read that is whole
-    let mut asked = false;
     reference(bytes, BUDGET, b"", |n, text, _, truncated, _| {
         if n < start {
             return true;
         }
         if n > requested {
-            (next, asked) = (Some(n), true);
             return false;
         }
         if n > end || (!content.is_empty() && content.len() + text.len() > BUDGET) {
@@ -160,7 +157,7 @@ fn reference_read(
         true
     })
     .ok()?;
-    Some((content, last, clipped || (next.is_some() && !asked), next))
+    Some((content, last, clipped || next.is_some(), next))
 }
 
 /// Lines of `width` bytes, each with `TOKEN` somewhere, to `size` bytes.
@@ -457,7 +454,6 @@ fn grep_and_read_give_the_window_scan_results() {
                 path,
                 Ok(start),
                 Ok(end.unwrap_or(9_007_199_254_740_991)),
-                false,
             );
             match (&public, &got) {
                 (Ok(public), Ok(raw)) => assert_pinned_window(public, raw, &at, start),

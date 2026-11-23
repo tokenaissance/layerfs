@@ -5,7 +5,7 @@
 //! receipts (archived at af2ad92bce,
 //! `core/docs/issues/535/receipts/g7-live/`) enabled them on the
 //! VM platforms; `control/SUPPORT.json` (rendered by [`support_json`], compared by a
-//! test) and `home get --with platforms` follow.
+//! test) and `machine.platforms` follow.
 use crate::options::OptSpec;
 use crate::platform::{ExecutorKind, HostOs, How, KernelRoute, Platform};
 pub use layerfs_bridge::StoreKind;
@@ -32,7 +32,7 @@ pub struct PostgresqlSupport {
     pub reason: Option<&'static str>,
 }
 
-/// One platform on one host: the row `home get --with platforms` returns, minus
+/// One platform on one host: the row `machine.platforms` returns, minus
 /// its live fields (`ready`, `missing`, `version`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SupportRow {
@@ -68,7 +68,7 @@ pub struct Supports {
 }
 
 const OTHER_HOST: &str = "LayerFS names no host other than macOS, Linux and Windows";
-const NO_BACKEND: &str = "no Sandbox backend on Windows";
+const NO_BACKEND: &str = "no Sandbox backend on Windows (O5)";
 
 /// Why `platform` cannot be on `host`, or `None` where it can.
 fn host_refusal(platform: Platform, host: HostOs) -> Option<&'static str> {

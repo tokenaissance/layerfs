@@ -8,9 +8,7 @@ pub struct ExecRequest {
     pub arguments: Vec<String>,
     pub environment: Vec<String>,
     pub directory: String,
-    /// The command's standard input, given whole; `None`: it reads
-    /// `/dev/null`.
-    pub stdin: Option<Vec<u8>>,
+    pub stdin: bool,
 }
 impl fmt::Debug for ExecRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -19,7 +17,7 @@ impl fmt::Debug for ExecRequest {
             .field("arguments_count", &self.arguments.len())
             .field("environment_count", &self.environment.len())
             .field("directory", &self.directory)
-            .field("stdin_bytes", &self.stdin.as_ref().map(Vec::len))
+            .field("stdin", &self.stdin)
             .finish()
     }
 }

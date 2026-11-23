@@ -92,7 +92,7 @@ impl MutationReply {
         let mutation = match KernelMutation::perform(services, request).await {
             Ok(mutation) => mutation,
             Err(failure) => {
-                self.error(terminal::errno(failure.fenced(), false));
+                self.error(terminal::errno(failure.fenced()));
                 return terminal::mutation(&fence, failure).await;
             }
         };

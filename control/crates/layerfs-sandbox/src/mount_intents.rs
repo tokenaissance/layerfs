@@ -78,6 +78,7 @@ pub fn store_of(home: &Path, record: &SandboxRecord) -> Result<OpenArgs, String>
     Ok(open)
 }
 
+
 /// What ends a mount intent a forced remove of Sandbox `record` could not
 /// end: only the Store's own admission, once it can prove the intent's
 /// owner gone (another boot of the kernel that ran it, for a sqlite Store),

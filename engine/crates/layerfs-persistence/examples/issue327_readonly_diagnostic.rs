@@ -7,7 +7,7 @@ fn main() {
     )
     .unwrap();
     for sql in [
-        "PRAGMA synchronous=NORMAL",
+        "PRAGMA synchronous=OFF",
         "PRAGMA fullfsync=0",
         "PRAGMA journal_mode",
         "PRAGMA user_version",

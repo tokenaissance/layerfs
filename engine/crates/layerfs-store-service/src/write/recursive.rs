@@ -36,9 +36,7 @@ fn join(path: &str, name: &[u8]) -> Result<String> {
     ))
 }
 impl Mutation<'_> {
-    /// Removes the entry at `path`; a folder that is not empty only when
-    /// `recursive`, else it is refused `NotEmpty`.
-    pub fn remove(&mut self, path: &str, recursive: bool) -> Result<()> {
+    pub fn remove(&mut self, path: &str) -> Result<()> {
         if path == "/" {
             return Err(args::invalid("cannot remove the root"));
         }
@@ -47,21 +45,6 @@ impl Mutation<'_> {
             let (parent, name) = self.parent(path)?;
             self.apply(Operation::Unlink { parent, name })?;
             return Ok(());
-        }
-        if !recursive {
-            let page = (self.view)
-                .list(self.op.overlay(), top.serial, None)
-                .map_err(read_failure)?;
-            if !page.entries.is_empty() {
-                return Err(args::refuse(
-                    "NotEmpty",
-                    format!("{path} is a folder that is not empty"),
-                    layerfs_bridge::control::SdkValue::map([(
-                        "path",
-                        layerfs_bridge::control::SdkValue::text(path),
-                    )]),
-                ));
-            }
         }
         let mut stack = vec![Frame::new(path.to_owned(), top.serial)];
         while let Some(frame) = stack.last_mut() {
@@ -103,9 +86,12 @@ impl Mutation<'_> {
     }
     pub fn rename(&mut self, from: &str, to: &str) -> Result<()> {
         overlap(from, to)?;
-        self.resolve(from)?;
         if self.optional(to)?.is_some() {
-            return Err(exists(to));
+            return Err(args::refuse(
+                "Exists",
+                to,
+                layerfs_bridge::control::SdkValue::Null,
+            ));
         }
         let (parent, name) = self.parent(from)?;
         let (new_parent, new_name) = self.parent(to)?;
@@ -132,7 +118,11 @@ impl Mutation<'_> {
     pub fn copy(&mut self, from: &str, to: &str, index: u64) -> Result<()> {
         overlap(from, to)?;
         if self.optional(to)?.is_some() {
-            return Err(exists(to));
+            return Err(args::refuse(
+                "Exists",
+                to,
+                layerfs_bridge::control::SdkValue::Null,
+            ));
         }
         let top = self.resolve(from)?;
         let owner = self
@@ -286,10 +276,6 @@ impl Mutation<'_> {
         }
         Ok(())
     }
-}
-fn exists(to: &str) -> layerfs_bridge::control::SdkRefusal {
-    let message = format!("{to} already exists");
-    args::refuse("Exists", message, layerfs_bridge::control::SdkValue::Null)
 }
 fn overlap(from: &str, to: &str) -> Result<()> {
     if from == to || from == "/" || to.starts_with(&format!("{from}/")) {

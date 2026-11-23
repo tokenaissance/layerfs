@@ -22,7 +22,7 @@ fn config() -> HistoryCatalogConfig {
 fn create(path: &std::path::Path, layout: SqlitePackLayout) -> SqliteHandles {
     SqliteHandles::create(
         PersistenceConfig::sqlite(path)
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal)
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable)
             .with_sqlite_pack_layout(layout),
         StoragePolicy::frozen_default(),
         &config(),
@@ -80,9 +80,9 @@ fn fixture(h: &SqliteHandles) -> Vec<FinalizedObject> {
 #[test]
 fn declared_layouts_reopen_without_mutating_or_promoting_their_schema() {
     for (layout, version) in [
-        (SqlitePackLayout::Monolithic, 36),
-        (SqlitePackLayout::GroupRows, 37),
-        (SqlitePackLayout::GroupRowsIndexed, 38),
+        (SqlitePackLayout::Monolithic, 39),
+        (SqlitePackLayout::GroupRows, 40),
+        (SqlitePackLayout::GroupRowsIndexed, 41),
     ] {
         let t = support::Temp::new("indexed-legacy-open");
         let path = t.join("db");
@@ -92,7 +92,7 @@ fn declared_layouts_reopen_without_mutating_or_promoting_their_schema() {
         let before = std::fs::read(&path).unwrap();
         let h = SqliteHandles::open_read_only(
             PersistenceConfig::sqlite(&path)
-                .with_sqlite_profile(SqlitePersistenceProfile::Normal)
+                .with_sqlite_profile(SqlitePersistenceProfile::Disposable)
                 .with_sqlite_pack_layout(SqlitePackLayout::GroupRowsIndexed),
             &config().binding_key,
             config().cursor_key,
@@ -169,7 +169,7 @@ fn missing_covering_index_is_refused_at_open_without_automatic_repair() {
     drop(db);
     let before = std::fs::read(&path).unwrap();
     assert!(SqliteHandles::open_read_only(
-        PersistenceConfig::sqlite(&path).with_sqlite_profile(SqlitePersistenceProfile::Normal),
+        PersistenceConfig::sqlite(&path).with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         &config().binding_key,
         config().cursor_key
     )

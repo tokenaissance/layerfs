@@ -28,7 +28,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
     let path = temp.join("store.sqlite");
     let handles = SqliteHandles::create(
         PersistenceConfig::sqlite(path.clone())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         StoragePolicy::frozen_default(),
         &HistoryCatalogConfig {
             binding_key: BINDING.to_vec(),
@@ -43,7 +43,7 @@ fn create_store() -> (Temp, SqliteHandles, PathBuf) {
 fn reopen(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(
         PersistenceConfig::sqlite(path.to_path_buf())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         [71; 32],
     )
@@ -287,7 +287,6 @@ fn commit(handles: &SqliteHandles, branch: BranchId, candidate_root: ObjectId) -
             second_parent: None,
             meta: CommitMeta::new(CommitVia::Files),
             force: false,
-            required_head: None,
         })
         .unwrap()
     {
@@ -1163,30 +1162,6 @@ fn an_observed_run_is_told_each_phase_once_in_order() {
     assert_eq!(phases, ["mark"]);
 }
 
-/// A panic that unwinds out of a run (here the observer's, as the run enters
-/// `mark`, once its record is written) marks the record returned: a worker
-/// that lives on after it would otherwise read the Store `busy` until it
-/// restarts (plan Part 3 fix 2). The record stays for the next run to judge.
-#[test]
-fn a_panic_out_of_a_run_marks_its_record_returned() {
-    let (_temp, handles, path) = create_store();
-    let request = CompactRequest {
-        op_id: [36; 16],
-        owner_pid: Some(std::process::id()),
-        ..CompactRequest::default()
-    };
-    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        handles.compact_observed(&request, &mut |phase| {
-            assert_ne!(phase, "mark", "the observer stops the run in mark");
-        })
-    }));
-    assert!(run.is_err(), "the run unwound");
-    let op = compact_op_status(&path).expect("the run left its record");
-    assert_eq!(op.op_id, [36; 16]);
-    assert!(op.returned, "an unwound run's record is marked returned");
-    assert_eq!(op.status(true).state, "unresolved");
-}
-
 #[test]
 fn the_empty_store_report_explains_its_zeros() {
     let (_temp, handles, path) = create_store();
@@ -1351,7 +1326,7 @@ fn create_with(
     let path = temp.join("store.sqlite");
     let handles = SqliteHandles::create(
         PersistenceConfig::sqlite(path.clone())
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal)
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable)
             .with_sqlite_pack_layout(layout)
             .with_sqlite_acquisition(acquisition),
         StoragePolicy::frozen_default(),

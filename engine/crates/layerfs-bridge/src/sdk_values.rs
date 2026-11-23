@@ -36,11 +36,9 @@ pub fn node_text(node: NodeId) -> String {
     hex(node.as_slice())
 }
 
-/// A short label for marker lines: the tag and the six bytes after it, the
-/// first 14 characters of the identity, so the label is a prefix that
-/// `commit.get` and every `--at` accept.
+/// A short label for marker lines: the first six bytes after the tag.
 pub fn short(node: NodeId) -> String {
-    hex(&node.as_slice()[..7])
+    hex(&node.as_slice()[1..7])
 }
 
 /// How a Commit was made, as the SDK names it.

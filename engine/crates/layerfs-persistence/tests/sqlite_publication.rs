@@ -95,7 +95,9 @@ fn wal_full_settings_are_explicit() {
     // #353 added layer_lineage, commit_lineage, absorbed and reach; #355
     // added merge_operation and merge_record; #364 added file_digest;
     // the GC work added the markers, project_epoch, gc_intent, gc_op, gc_dead
-    // and kept_node.
+    // and kept_node; the lean phase 3 schema keeps no authority or audit
+    // table, and without the acquisition tables no AUTOINCREMENT identity
+    // creates sqlite_sequence.
     assert_eq!(names, 28);
 }
 #[test]
@@ -525,13 +527,9 @@ fn explicit_profiles_keep_atomic_publication_and_matching_reopen_contracts() {
         let profile = h.profile();
         assert_eq!(profile.persistence, selected);
         assert_eq!(profile.journal_mode, "wal");
-        assert_eq!(profile.synchronous, if selected == Durable { 2 } else { 1 });
+        assert_eq!(profile.synchronous, if selected == Durable { 2 } else { 0 });
         assert_eq!(profile.fullfsync, i64::from(selected == Durable));
         assert_eq!((profile.checkpoint_fullfsync, profile.temp_store), (1, 2));
-        // Routine checkpoint-thread passes sync with plain fsync; the idle
-        // and last-close checkpoints run on the session's connection above
-        // (finding #11, narrowed by the owner 2026-11-23).
-        assert_eq!(profile.checkpoint_thread_checkpoint_fullfsync, Some(0));
         assert_eq!(
             (profile.page_size, profile.cache_size, profile.mmap_size),
             (4096, -2048, 0)
@@ -639,9 +637,9 @@ fn multi_page_publication_preserves_first_wins_loss_order_and_late_failure_atomi
     }
 }
 
-/// Owner direction 2026-11-23: Normal is the sole active development
+/// Owner direction 2026-10-07: Disposable is the sole active development
 /// verification profile. Durable execution of these bodies is NOT_RUN —
-/// deferred by owner for Normal-only development. Durable support and its
+/// deferred by owner for Disposable-only development. Durable support and its
 /// retained historical receipts are unchanged.
 const DEVELOPMENT_PROFILES: [layerfs_persistence::SqlitePersistenceProfile; 1] =
-    [layerfs_persistence::SqlitePersistenceProfile::Normal];
+    [layerfs_persistence::SqlitePersistenceProfile::Disposable];

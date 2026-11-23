@@ -88,7 +88,6 @@ fn commit(service: &Service, token: WorkspaceToken) -> Reply {
             token,
             force: false,
             message: Some("over nfs".into()),
-            expected: None,
         }))
         .unwrap()
         .reply

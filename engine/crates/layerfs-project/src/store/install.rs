@@ -32,9 +32,9 @@ pub fn install_file(
     let mut accepted = false;
     let mut acknowledged = None;
     let result = (|| {
-        if manifest.profile != StoreProfile::Normal || !store.profile.permitted() {
+        if manifest.profile != StoreProfile::Disposable || !store.profile.permitted() {
             return Err(InstallError::Protocol(ControlError(
-                "explicit Normal Store profile required",
+                "explicit Normal or Disposable Store profile required",
             )));
         }
         if manifest.daemon_sqlite.is_some() {

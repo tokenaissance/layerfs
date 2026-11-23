@@ -1,8 +1,6 @@
-//! A folder scope confines `branch.fork` and `branch.publish` references
-//! (#30, #33): Branch names are composed into the namespace and checked by
-//! the scope, and a Commit given as `at` must be in the history of the
-//! namespace's Branch, which the Store checks. Every refusal comes before
-//! any effect.
+//! A folder scope confines `branch.fork` and `branch.publish` references:
+//! `from_commit` and `commit` pass the same check as every other Commit or
+//! Branch reference, and a refusal comes before any effect (#30, #33).
 use layerfs_api::home;
 use layerfs_api::Scope;
 use layerfs_bridge::control::SdkValue;
@@ -71,11 +69,15 @@ fn scope() -> Scope {
 
 /// Names of every Branch of the project, read unscoped.
 fn branches(home: &Path) -> Vec<String> {
-    let all = ok(home, "branch.list", &[p(), ("limit", SdkValue::Int(1000))]);
+    let all = ok(
+        home,
+        "branch.list",
+        &[p(), ("page_size", SdkValue::Int(1000))],
+    );
     match all.get("items") {
         Some(SdkValue::List(items)) => items
             .iter()
-            .map(|i| i.get_text("branch").unwrap().to_owned())
+            .map(|i| i.get_text("name").unwrap().to_owned())
             .collect(),
         other => panic!("no items: {other:?}"),
     }
@@ -86,16 +88,16 @@ fn commit_of(home: &Path, branch: &str) -> String {
     let list = ok(home, "commit.list", &[p(), ("branch", t(branch))]);
     match list.get("items") {
         Some(SdkValue::List(items)) if items.len() == 1 => {
-            items[0].get_text("commit").unwrap().to_owned()
+            items[0].get_text("id").unwrap().to_owned()
         }
         other => panic!("{branch}: one Commit expected: {other:?}"),
     }
 }
 
-/// `main`'s head: what a publish moves.
-fn main_head(home: &Path) -> String {
+/// The base Layer of `main`: what a publish moves.
+fn main_base(home: &Path) -> String {
     let main = ok(home, "branch.get", &[p(), ("branch", t("main"))]);
-    main.get_text("commit").unwrap().to_owned()
+    main.get_text("base").unwrap().to_owned()
 }
 
 /// A home with project `shop/api`; Branch `other` (outside the scope's
@@ -115,7 +117,7 @@ fn project() -> (PathBuf, PathBuf) {
         ok(
             &home,
             "branch.fork",
-            &[p(), ("name", t(branch)), ("from", t("main"))],
+            &[p(), ("name", t(branch)), ("from_branch", t("main"))],
         );
         ok(
             &home,
@@ -137,70 +139,74 @@ fn cleanup(home: PathBuf, folder: PathBuf) {
     std::fs::remove_dir_all(folder).unwrap();
 }
 
-/// A refused fork: what it shows, its arguments and the expected code, or
-/// the scope's message.
-type Case<'a> = (&'a str, &'a [(&'a str, SdkValue)], &'a str);
-
 #[test]
 fn fork_refuses_every_reference_outside_the_namespace_before_any_effect() {
     let (home, folder) = project();
     let scoped = scope();
     let before = branches(&home);
     let other = commit_of(&home, "other");
-    let forks: &[Case<'_>] = &[
-        // the Store: `other`'s Commit is not in `agent.work`'s history
+    // `from_commit` is checked like `from_branch`: a Branch name is composed
+    // (`agent.other` does not exist), a malformed reference is out of scope
+    let forks: &[(&str, &[(&str, SdkValue)])] = &[
         (
-            "at naming an outside Commit",
-            &[("name", t("x")), ("from", t("work")), ("at", t(&other))],
-            "NotFound",
-        ),
-        (
-            "at by a prefix of an outside Commit",
+            "from_commit naming an outside Branch",
             &[
                 ("name", t("x")),
-                ("from", t("work")),
-                ("at", t(&other[..12])),
+                ("from_branch", t("work")),
+                ("from_commit", t("other")),
             ],
-            "NotFound",
         ),
         (
-            "at that is no Commit id",
-            &[("name", t("x")), ("from", t("work")), ("at", t("Other"))],
-            "InvalidInput",
+            "from_commit outside the Branch grammar",
+            &[
+                ("name", t("x")),
+                ("from_branch", t("work")),
+                ("from_commit", t("Other")),
+            ],
         ),
-        // composed to `agent.other`, which names no Branch
         (
-            "from outside",
-            &[("name", t("x")), ("from", t("other"))],
-            "NotFound",
+            "from_commit of the wrong length",
+            &[
+                ("name", t("x")),
+                ("from_branch", t("work")),
+                ("from_commit", t(&other[..65])),
+            ],
         ),
-        // the scope, before dispatch
         (
-            "from outside the grammar",
-            &[("name", t("x")), ("from", t("../other"))],
-            "out of scope: branch",
+            "from_branch outside",
+            &[("name", t("x")), ("from_branch", t("other"))],
+        ),
+        (
+            "from_branch outside the grammar",
+            &[("name", t("x")), ("from_branch", t("../other"))],
         ),
         (
             "name outside the grammar",
-            &[("name", t("A/b")), ("from", t("work"))],
-            "out of scope: branch",
+            &[("name", t("A/b")), ("from_branch", t("work"))],
         ),
         (
             "name too long once composed",
-            &[("name", t(&"n".repeat(60))), ("from", t("work"))],
-            "out of scope: branch",
+            &[("name", t(&"n".repeat(60))), ("from_branch", t("work"))],
         ),
     ];
-    for (what, args, expected) in forks {
+    for (n, (what, args)) in forks.iter().enumerate() {
         let mut given = vec![p()];
         given.extend(args.iter().cloned());
         let refused = call(&home, Some(&scoped), "branch.fork", &given).expect_err(what);
-        match expected.strip_prefix("out of scope") {
-            Some(_) => {
-                assert_eq!(refused.0, "InvalidInput", "{what}: {refused:?}");
-                assert!(refused.1.contains(expected), "{what}: {refused:?}");
-            }
-            None => assert_eq!(refused.0, *expected, "{what}: {refused:?}"),
+        // The two composed Branch names (cases 0 and 3) are inside the scope's
+        // namespace and name no Branch, so the Store refuses them as
+        // `NoSuchBranch`; the others are refused by the scope before dispatch.
+        let expected = if n == 0 || n == 3 {
+            "NoSuchBranch"
+        } else {
+            "InvalidInput"
+        };
+        assert_eq!(refused.0, expected, "{what}: {refused:?}");
+        if n != 0 && n != 3 {
+            assert!(
+                refused.1.contains("out of scope: branch"),
+                "{what}: {refused:?}"
+            );
         }
         assert_eq!(branches(&home), before, "{what}: a Branch appeared");
     }
@@ -212,25 +218,44 @@ fn fork_inside_the_namespace_still_works() {
     let (home, folder) = project();
     let scoped = scope();
     let work = commit_of(&home, "agent.work");
-    let fork = |name: &str, extra: &[(&str, SdkValue)]| {
-        let mut given = vec![p(), ("name", t(name)), ("from", t("work"))];
-        given.extend(extra.iter().cloned());
-        call(&home, Some(&scoped), "branch.fork", &given).unwrap()
-    };
-    // from a Branch of the namespace, its head or one of its Commits
-    fork("a", &[]);
-    let at = fork("b", &[("at", t(&work))]);
-    assert_eq!(at.get_text("commit"), Some(work.as_str()), "{at:?}");
-    fork("c", &[("at", t(&work[..10]))]);
-    // `from` left off is the namespace's own `main`, which does not exist
-    let refused = call(
+    // from a Branch of the namespace
+    call(
         &home,
         Some(&scoped),
         "branch.fork",
-        &[p(), ("name", t("d"))],
+        &[
+            ("project", t("shop/api")),
+            ("name", t("a")),
+            ("from_branch", t("work")),
+        ],
     )
-    .unwrap_err();
-    assert_eq!(refused.0, "NotFound", "{refused:?}");
+    .unwrap();
+    // `from_commit` as a Branch name is composed, like `from_branch`
+    call(
+        &home,
+        Some(&scoped),
+        "branch.fork",
+        &[
+            p(),
+            ("name", t("b")),
+            ("from_branch", t("work")),
+            ("from_commit", t("work")),
+        ],
+    )
+    .unwrap();
+    // `from_commit` as a Commit id of the namespace stays as given
+    call(
+        &home,
+        Some(&scoped),
+        "branch.fork",
+        &[
+            p(),
+            ("name", t("c")),
+            ("from_branch", t("work")),
+            ("from_commit", t(&work)),
+        ],
+    )
+    .unwrap();
     let names = branches(&home);
     for made in ["agent.a", "agent.b", "agent.c"] {
         assert!(names.iter().any(|n| n == made), "{made} in {names:?}");
@@ -242,22 +267,29 @@ fn fork_inside_the_namespace_still_works() {
 fn publish_refuses_a_commit_outside_the_namespace_before_any_effect() {
     let (home, folder) = project();
     let scoped = scope();
-    let head = main_head(&home);
-    let other = commit_of(&home, "other");
-    for (what, at, code) in [
-        ("an outside Commit", other.as_str(), "NotFound"),
-        ("no Commit id", "Other", "InvalidInput"),
+    let base = main_base(&home);
+    for (what, commit) in [
+        ("an outside Branch name", "other"),
+        ("outside the Branch grammar", "Other"),
     ] {
         let refused = call(
             &home,
             Some(&scoped),
             "branch.publish",
-            &[p(), ("branch", t("work")), ("at", t(at))],
+            &[p(), ("branch", t("work")), ("commit", t(commit))],
         )
         .expect_err(what);
-        assert_eq!(refused.0, code, "{what}: {refused:?}");
-        assert_eq!(main_head(&home), head, "{what}: main moved");
+        assert_eq!(refused.0, "InvalidInput", "{what}: {refused:?}");
+        assert_eq!(main_base(&home), base, "{what}: main moved");
     }
+    let refused = call(
+        &home,
+        Some(&scoped),
+        "branch.publish",
+        &[p(), ("branch", t("work")), ("commit", t("Other"))],
+    )
+    .unwrap_err();
+    assert!(refused.1.contains("out of scope: branch"), "{refused:?}");
     // `branch` outside the namespace is composed, so it names no Branch
     let refused = call(
         &home,
@@ -266,16 +298,8 @@ fn publish_refuses_a_commit_outside_the_namespace_before_any_effect() {
         &[p(), ("branch", t("other"))],
     )
     .unwrap_err();
-    assert_eq!(refused.0, "NotFound", "{refused:?}");
-    let refused = call(
-        &home,
-        Some(&scoped),
-        "branch.publish",
-        &[p(), ("branch", t("../other"))],
-    )
-    .unwrap_err();
-    assert!(refused.1.contains("out of scope: branch"), "{refused:?}");
-    assert_eq!(main_head(&home), head, "main moved");
+    assert_eq!(refused.0, "NoSuchBranch", "{refused:?}");
+    assert_eq!(main_base(&home), base, "main moved");
     cleanup(home, folder);
 }
 
@@ -283,18 +307,17 @@ fn publish_refuses_a_commit_outside_the_namespace_before_any_effect() {
 fn publish_inside_the_namespace_still_works() {
     let (home, folder) = project();
     let scoped = scope();
-    let head = main_head(&home);
+    let base = main_base(&home);
     let work = commit_of(&home, "agent.work");
     let added = call(
         &home,
         Some(&scoped),
         "branch.publish",
-        &[p(), ("branch", t("work")), ("at", t(&work[..12]))],
+        &[p(), ("branch", t("work")), ("commit", t(&work))],
     )
     .unwrap();
-    let published = added.get_text("commit").expect("the new publication");
-    assert_ne!(main_head(&home), head, "main took the new publication");
-    assert_eq!(main_head(&home), published);
+    assert_eq!(added.get_text("kind"), Some("Added"), "{added:?}");
+    assert_ne!(main_base(&home), base, "main took the new Layer");
     cleanup(home, folder);
 }
 
@@ -302,7 +325,7 @@ fn publish_inside_the_namespace_still_works() {
 fn the_json_form_refuses_like_the_table_call() {
     let (home, folder) = project();
     let scope_text = r#"{"project":"shop/api","folder":"/web","branch":"agent"}"#;
-    let args = r#"{"project":"shop/api","name":"x","from":"../work"}"#;
+    let args = r#"{"project":"shop/api","name":"x","from_branch":"work","from_commit":"Other"}"#;
     let answer = layerfs_api::call_json(
         Some(&home),
         Some(scope_text),
@@ -315,11 +338,16 @@ fn the_json_form_refuses_like_the_table_call() {
         &home,
         Some(&scope()),
         "branch.fork",
-        &[p(), ("name", t("x")), ("from", t("../work"))],
+        &[
+            p(),
+            ("name", t("x")),
+            ("from_branch", t("work")),
+            ("from_commit", t("Other")),
+        ],
     )
     .unwrap_err();
     assert!(
-        answer.contains(&format!("\"error\":\"{}\"", direct.0)),
+        answer.contains(&format!("\"code\":\"{}\"", direct.0)),
         "{answer}"
     );
     assert!(answer.contains("out of scope: branch"), "{answer}");

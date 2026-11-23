@@ -81,7 +81,7 @@ except the statements PostgreSQL replaces
 | --- | --- | --- | --- |
 | `initialize_layerstack` | Insert the stack and its genesis Layer | name or identity taken: `Integrity` | [`layerstack.rs`](../../../../engine/crates/layerfs-persistence/src/history/layerstack.rs) |
 | `fork` | Insert one Branch row at a Layer, or at a Commit on the source Branch's first-parent chain; nothing is copied | Commit not in history: `NotInHistory` | [`branch.rs`](../../../../engine/crates/layerfs-persistence/src/history/branch.rs) |
-| `commit_branch` | Check the expected head and base (and `required_head`), insert or verify the Commit, record its lineage, advance the Branch from the head it read | moved head: `HeadMoved` unless `force` with the same base; another `required_head`, or an advance that matches no row: `HeadMoved`; same root: `UpToDate` | [`commit.rs`](../../../../engine/crates/layerfs-persistence/src/history/commit.rs) |
+| `commit_branch` | Check the expected head and base, insert or verify the Commit, record its lineage, advance the Branch | moved head: `HeadMoved` unless `force` with the same base; same root: `UpToDate` | [`commit.rs`](../../../../engine/crates/layerfs-persistence/src/history/commit.rs) |
 | `add_layer` | Publish a Branch head Commit as a Layer on the stack head and record the Layers it overwrote | `HeadMoved`, `StackMoved`, `BaseMismatch`; outcomes `UpToDate`, `NoChanges` | [`layerstack.rs`](../../../../engine/crates/layerfs-persistence/src/history/layerstack.rs) |
 | `merge_branch` | Check both sides still sit at the merged nodes, then insert a new Branch: a fast-forward to a Layer or Commit, or a merge Commit with `second_parent` | moved side: `StackMoved` / `HeadMoved` | [`merge.rs`](../../../../engine/crates/layerfs-persistence/src/history/merge.rs) |
 | `reserve_inodes` | Consume a half-open inode range for a scope; serials are never recycled | past `i64::MAX`: `Capacity` | [`allocation.rs`](../../../../engine/crates/layerfs-persistence/src/history/allocation.rs) |
@@ -118,9 +118,7 @@ open, filled once by `backfill_lineage`
  install the new base
 ```
 
-A merge that conflicted publishes nothing and so takes no lane; when the
-in-lane step is what conflicts, the lane is released before validation and
-the local install. `branch_snapshot` reads a Branch with its stack, base root and head Commit in
+`branch_snapshot` reads a Branch with its stack, base root and head Commit in
 one statement. Work that grows with the Commit runs before the lane
 ([`commit.rs`](../../../../engine/crates/layerfs-store-service/src/store/commit.rs)).
 `fork`, `merge_branch` and `add_layer` check their expected heads inside their
@@ -135,7 +133,7 @@ own write transaction, which the one writer already orders.
 | Waiting for a turn is readiness, never a retry; the queue has no time limit and a holder that unwinds releases its turn | [`admission.rs`](../../../../engine/crates/layerfs-persistence/src/backend/admission.rs) |
 | Short holds: only head check, merge step and publish run under the lane | [`commit.rs`](../../../../engine/crates/layerfs-store-service/src/store/commit.rs) |
 | Reads never take the lane or the cross-process lock | [`sqlite/session/transaction.rs`](../../../../engine/crates/layerfs-persistence/src/backend/sqlite/session/transaction.rs), [`read_service.rs`](../../../../engine/crates/layerfs-store-service/src/store/read_service.rs) |
-| Normal / WAL / synchronous=NORMAL is the only SQLite profile, selected explicitly by every opener; Durable is refused | [`store_service.rs`](../../../../engine/crates/layerfs-store-service/src/store_service.rs), [`init.rs`](../../../../engine/crates/layerfs-project/src/store/init.rs), [`live.rs`](../../../../engine/crates/layerfs-project/src/store/live.rs), [`install.rs`](../../../../engine/crates/layerfs-daemon/src/install.rs) |
+| Disposable / WAL / synchronous=OFF is the only permitted SQLite profile; product openers select it explicitly and refuse anything else | [`store_service.rs`](../../../../engine/crates/layerfs-store-service/src/store_service.rs), [`init.rs`](../../../../engine/crates/layerfs-project/src/store/init.rs), [`live.rs`](../../../../engine/crates/layerfs-project/src/store/live.rs), [`install.rs`](../../../../engine/crates/layerfs-daemon/src/install.rs) |
 | One attempt per operation: `busy_timeout=0`, no busy handler, no retry or replay; `Unknown` quarantines the session and every later call fails without SQL | [`records.rs`](../../../../engine/crates/layerfs-persistence/src/backend/records.rs), [`sqlite/session/transaction.rs`](../../../../engine/crates/layerfs-persistence/src/backend/sqlite/session/transaction.rs) |
 | Published packs, units, locations and value blocks never change; a block overlapping a stored one fails its publication | Triggers and insert-only statements: [`objects.sql`](../../../../engine/crates/layerfs-persistence/sql/sqlite/objects.sql), [`sqlite/metadata/values.rs`](../../../../engine/crates/layerfs-persistence/src/backend/sqlite/metadata/values.rs) |
 | Pack ids never go back; inode serials are never recycled | [`metadata/allocation.rs`](../../../../engine/crates/layerfs-persistence/src/metadata/allocation.rs), [`history/allocation.rs`](../../../../engine/crates/layerfs-persistence/src/history/allocation.rs) |
@@ -146,12 +144,11 @@ own write transaction, which the one writer already orders.
 
 Durable persistence: the `Durable` SQLite variant still compiles, but its
 execution is `NOT_RUN — disabled by owner until explicit reauthorization`.
-Every opener selects `Normal` by name, and new code must too: the
+Every product opener selects Disposable by name, and new code must too: the
 Rust enum's `#[default]` attribute still sits on the retained `Durable`
-variant, so an unnamed profile is a defect. A Normal Store survives
-process termination; a kernel or VM crash can lose the commits since the
-last synchronized checkpoint, and its safety gate has not run, so no
-power-loss guarantee is claimed
+variant, so an unnamed profile is a defect. A Disposable Store survives
+process termination,
+and a kernel or VM crash can lose or damage it
 ([`config.rs`](../../../../engine/crates/layerfs-persistence/src/store/config.rs)).
 A PostgreSQL Store has no profile; its write setting is `synchronous_commit`.
 
@@ -175,15 +172,16 @@ A PostgreSQL Store has no profile; its write setting is `synchronous_commit`.
 | `BackendError` | `PersistenceError` | `HistoryError` | Meaning |
 | --- | --- | --- | --- |
 | `Busy` | `Busy` | `Busy` | Another writer held the lock |
-| `Closed` | `Refused "Closed"` | `OwnershipUnavailable` | Store closed before this call's turn, or (PostgreSQL) a nested write found its lane lost and rolled back |
+| `Closed` | `Refused "Closed"` | `OwnershipUnavailable` | Store closed before this call's turn |
 | `Rejected` | `Refused "Rejected"` | `OwnershipUnavailable` | PostgreSQL refused a new connection |
 | `Cancelled` | `Refused "Cancelled"` | `OwnershipUnavailable` | A signal interrupted the writer wait (Linux and macOS) |
 | `ReadOnly` | `Refused "ReadOnly"` | `ContinuityUnavailable` | Write on a read-only session |
 | `Capacity` | `Refused "Capacity"` | `Capacity("persistence")` | A bound or the disk margin was reached |
 | `Integrity` | `Malformed` | `Integrity("persistence")` | Stored or supplied data broke a rule |
 | `SchemaVersion1` | `Refused` (names the conversion) | `Integrity` | A schema version 1 SQLite Store |
+| `SchemaVersion2` | `Refused` (names `tools/store_gc_convert.py convert`) | `Integrity` | A schema version 2 SQLite Store (36–38, or 42–44 with acquisition); the phase-3 authority tables convert offline |
 | `UnsupportedSchemaVersion` | `Refused` | `Unsupported` | Diagnostic open of an unknown layout |
-| `Unknown` | `Uncertain` | `UnknownOutcome` | Outcome unknown; session quarantined, its connection closed and the writer lane released ([SQLite](sqlite.md#quarantine), [PostgreSQL](postgresql.md#session)) |
+| `Unknown` | `Uncertain` | `UnknownOutcome` | Outcome unknown; session quarantined |
 
 Source: [`records.rs`](../../../../engine/crates/layerfs-persistence/src/backend/records.rs).
 
@@ -193,9 +191,7 @@ Source: [`records.rs`](../../../../engine/crates/layerfs-persistence/src/backend
 | --- | --- | --- | --- |
 | [`heads.rs`](../../../../engine/crates/layerfs-persistence/tests/heads.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test heads` | macOS, Linux (no-sidecar check Linux only) | Project, fork and Commit change the heads exactly; a snapshot has the same heads |
 | [`writer_admission.rs`](../../../../engine/crates/layerfs-persistence/tests/writer_admission.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test writer_admission` | macOS, Linux (`Cancelled` Linux only) | FIFO order, `Closed` on close, writers queued behind the lane, self re-entry refused, the directory lock across processes and concurrent opens, its hand-over, and `Cancelled` |
-| [`diagnostics_during_lane.rs`](../../../../engine/crates/layerfs-persistence/tests/diagnostics_during_lane.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test diagnostics_during_lane` | any (the foreign-lane case macOS, Linux) | Counter reads return while another thread holds the lane, and while the session waits for another session's lane |
-| [`sqlite_quarantine_release.rs`](../../../../engine/crates/layerfs-persistence/tests/sqlite_quarantine_release.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test sqlite_quarantine_release` | macOS, Linux; needs `python3` | An uncertain write, alone or nested in a held lane, closes its connection and frees the lane: a raw writer and a second session write at once, and the first session stays quarantined |
-| [`postgresql_lane_liveness.rs`](../../../../engine/crates/layerfs-persistence/tests/postgresql_lane_liveness.rs) | `LAYERFS_TEST_POSTGRES_URL=… cargo +1.85.1 test --locked -p layerfs-persistence --test postgresql_lane_liveness` | a PostgreSQL server; prints `NOT_RUN` without the variable | A quarantined session closes its connection (no backend is left idle in its aborted transaction) and the lane row is free; a nested write after its lane connection was terminated fails `Closed` and writes nothing |
+| [`diagnostics_during_lane.rs`](../../../../engine/crates/layerfs-persistence/tests/diagnostics_during_lane.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test diagnostics_during_lane` | any | Counter reads return while another thread holds the lane |
 | [`layerstack_removal.rs`](../../../../engine/crates/layerfs-persistence/tests/layerstack_removal.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test layerstack_removal` | macOS, Linux; also PostgreSQL when `LAYERFS_TEST_POSTGRES_URL` is set | Removing one of two projects leaves the other whole, frees the name and takes its logical bytes out of the totals |
 | [`binding_hint_blocks.rs`](../../../../engine/crates/layerfs-persistence/tests/binding_hint_blocks.rs) | `cargo +1.85.1 test --locked -p layerfs-persistence --test binding_hint_blocks` | macOS, Linux | Hints merge across blocks without repeats |
 | [`postgresql_acquisition.rs`](../../../../engine/crates/layerfs-persistence/tests/postgresql_acquisition.rs) | `LAYERFS_TEST_POSTGRES_URL=… cargo +1.85.1 test --locked -p layerfs-persistence --test postgresql_acquisition` | a PostgreSQL server; prints `NOT_RUN` without the variable | Creating a PostgreSQL Store, refusing a second create, and Init's acquisition over it |

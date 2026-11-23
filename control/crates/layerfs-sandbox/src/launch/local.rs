@@ -142,22 +142,14 @@ fn start_named(
         DaemonStore::Sqlite { locator, .. } => locator.clone(),
         _ => String::new(),
     };
-    let store = host.open_args().store;
+    let store = layerfs_store::identity::shared_store(&host.open_args())?;
     let labels = crate::lifecycle::labels(name, store.as_deref(), id);
     let api = SandboxApi::with_runtime(Arc::new(runtime));
     let options = launch_options(backend, identity, host)?;
-    let pg_host = match &setup.store {
-        DaemonStore::Postgres { url, .. } => Some(
-            layerfs_sandbox_backend::PostgresUrl::parse(url)
-                .map(|parsed| parsed.host().to_owned())
-                .unwrap_or_default(),
-        ),
-        DaemonStore::Sqlite { .. } => None,
-    };
     let request = ProviderCreate {
         launch: LaunchRequest {
             name: sandbox_name.clone(),
-            daemon_executable: executable.clone(),
+            daemon_executable: executable,
             daemon_config: Vec::new(),
             labels,
             startup_timeout: crate::lifecycle::STARTUP,
@@ -177,26 +169,13 @@ fn start_named(
     };
     let created = created.map_err(|mut failure| {
         drop(failure.control.take());
-        let pg = pg_host
-            .as_deref()
-            .filter(|_| failure.phase == crate::SandboxPhase::Listener)
-            .map(|pg_host| {
-                (
-                    pg_host,
-                    host.store.as_str(),
-                    backend == crate::runtime::Backend::Namespaces,
-                )
-            });
         abandon(
             id,
             format!(
-                "Sandbox {id} did not start: it stopped {}: {}",
-                failure.phase.words(),
-                failure.cause
+                "native sandbox stopped at {:?}: {:?}",
+                failure.phase, failure.cause
             ),
             failure.runtime.take(),
-            &executable,
-            pg,
         )
     })?;
     let instance = created.startup.instance;
@@ -207,12 +186,8 @@ fn start_named(
             drop(control);
             return Err(abandon(
                 id,
-                format!(
-                    "Sandbox {id} did not start: its daemon's address could not be read: {error}"
-                ),
+                format!("native endpoint after startup: {error:?}"),
                 Some(sandbox),
-                &executable,
-                None,
             ));
         }
     };
@@ -252,13 +227,8 @@ fn start_named(
         let _ = std::fs::remove_file(directory.join("control.json"));
         return Err(abandon(
             id,
-            format!(
-                "Sandbox {id} did not start: its records could not be written: {}",
-                refusal.message
-            ),
+            format!("local sandbox records: {}", refusal.message),
             runtime,
-            &executable,
-            None,
         ));
     }
     let state = Arc::new(state);
@@ -443,71 +413,33 @@ pub fn owned(host: &Host, id: &str, own: &Path) -> Result<(), SdkRefusal> {
 
 /// The refusal for a failed start. Everything a local start makes is its
 /// own (a directory and a child process), so each effect is known: the
-/// daemon's last log lines are read once (the message quotes the last one,
-/// the detail's `log` keeps them all), then it is stopped and its
+/// daemon's last log lines are read once, then it is stopped and its
 /// directory deleted, each once (`Failed`). If that cleanup fails, the
-/// outcome is `Unknown`, saying what is left. The detail's `daemon` is the
-/// program that was started, which the call layer compares with this
-/// build's.
-fn abandon(
-    id: &str,
-    mut cause: String,
-    sandbox: Option<Box<Sandbox>>,
-    daemon: &Path,
-    pg: Option<(&str, &str, bool)>,
-) -> SdkRefusal {
+/// outcome is `Unknown`, saying what is left.
+fn abandon(id: &str, mut cause: String, sandbox: Option<Box<Sandbox>>) -> SdkRefusal {
     let container = sandbox.as_ref().map(|s| s.identity().to_string());
     let mut log = None;
-    let mut last_line = None;
     let mut left = None;
     if let Some(mut sandbox) = sandbox {
         match sandbox.log_tail(crate::lifecycle::LOG_LINES, crate::lifecycle::LOG_BYTES) {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes).trim_end().to_owned();
-                if let Some(last) = text.lines().rev().map(str::trim).find(|l| !l.is_empty()) {
-                    last_line = Some(last.to_owned());
-                    cause = format!("{cause}. Its daemon's last error: {last}");
-                }
+                cause = format!("{cause}; its daemon's last log lines:\n{text}");
                 log = Some(text);
             }
-            Err(error) => cause = format!("{cause}; its daemon's log could not be read: {error}"),
+            Err(error) => cause = format!("{cause}; its daemon log was unreadable: {error:?}"),
         }
         let removed = sandbox.stop(1).and_then(|()| sandbox.delete());
         left = removed.err().map(|error| {
             format!(
-                "its daemon {} could not be stopped and removed: {error}",
+                "its local Sandbox {} could not be removed: {error:?}",
                 sandbox.identity()
             )
         });
     }
-    let pg_unreachable = left.is_none()
-        && pg.is_some()
-        && last_line.as_deref().is_some_and(|line| {
-            line.contains("cannot reach PostgreSQL Store")
-                || line.contains("Store open: physical Store I/O: pack persistence: Refused { status: \"Closed\" }")
-        });
-    let (code, message, removed) = match (left, pg_unreachable, pg) {
-        (None, true, Some((pg_host, store_name, namespaces))) => {
-            let message = if pg_host.is_empty() {
-                format!(
-                    "Sandbox {id} did not start: its daemon cannot reach PostgreSQL Store {store_name}'s server"
-                )
-            } else if namespaces
-                && !pg_host.eq_ignore_ascii_case("localhost")
-                && pg_host.parse::<std::net::IpAddr>().is_err()
-            {
-                format!(
-                    "Sandbox {id} did not start: its daemon cannot reach PostgreSQL Store {store_name}'s server at {pg_host} (the Sandbox root has no /etc/hosts or /etc/resolv.conf, so a hostname may not resolve there; use an IP address)"
-                )
-            } else {
-                format!(
-                    "Sandbox {id} did not start: its daemon cannot reach PostgreSQL Store {store_name}'s server at {pg_host}"
-                )
-            };
-            ("Unavailable", message, container.is_some())
-        }
-        (None, _, _) => ("Failed", cause, container.is_some()),
-        (Some(left), _, _) => (
+    let (code, message, removed) = match left {
+        None => ("Failed", cause, container.is_some()),
+        Some(left) => (
             "Unknown",
             format!("creation of Sandbox {id} failed ({cause}); {left}"),
             false,
@@ -520,7 +452,6 @@ fn abandon(
             ("container", SdkValue::opt_text(container)),
             ("removed", SdkValue::Bool(removed)),
             ("log", SdkValue::opt_text(log)),
-            ("daemon", SdkValue::text(daemon.display().to_string())),
         ]),
     }
 }

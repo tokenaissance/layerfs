@@ -12,9 +12,6 @@ use std::{
 pub enum Boundary {
     HeldWriter,
     LostAcknowledgement,
-    /// The request is lost before it reaches the Store: unknown to the
-    /// caller, nothing published.
-    LostRequest,
 }
 pub struct ObservedHistory {
     pub handles: Arc<SqliteHandles>,
@@ -71,7 +68,6 @@ impl HistoryCatalog for ObservedHistory {
                 // I/O/quarantine qualification. Original caller remains unknown.
                 Err(HistoryError::UnknownOutcome)
             }
-            Boundary::LostRequest => Err(HistoryError::UnknownOutcome),
         }
     }
 }

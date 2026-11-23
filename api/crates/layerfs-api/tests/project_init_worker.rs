@@ -31,12 +31,10 @@ fn call(
     layerfs_api::call(Some(home), name, args, events).map_err(|r| (r.code, r.message))
 }
 
-/// Init's arguments, asking for its long form (`detail`).
 fn init_args(project: &str, folder: &Path) -> SdkValue {
     SdkValue::map([
         ("project", t(project)),
         ("folder", t(&folder.display().to_string())),
-        ("detail", SdkValue::Bool(true)),
     ])
 }
 
@@ -68,11 +66,7 @@ fn home_with_box(tag: &str, listener: &TcpListener) -> PathBuf {
     home::open(&home).unwrap();
     write_record(
         &paths::machine_record(&home, "box"),
-        &SdkValue::map([
-            ("name", t("box")),
-            ("platform", t("lima")),
-            ("vm_name", t("layerfs-00000000-box")),
-        ]),
+        &SdkValue::map([("name", t("box")), ("platform", t("lima"))]),
     )
     .unwrap();
     let address = listener.local_addr().unwrap().to_string();
@@ -229,7 +223,7 @@ fn init_into_a_worker_s_store_copies_the_caller_s_folder() {
     let read = store_call(&home, "file.read", "shop/web", "/src/lib/a.txt");
     assert_eq!(read.get_text("text"), Some("nested\n"));
     let stat = store_call(&home, "file.stat", "shop/web", "/run.sh");
-    assert_eq!(stat.get_text("mode"), Some("0755"), "{stat:?}");
+    assert_eq!(stat.get_int("mode"), Some(0o755), "{stat:?}");
     let stat = store_call(&home, "file.stat", "shop/web", "/src/big.bin");
     assert_eq!(stat.get_int("size"), Some(big.len() as i64), "{stat:?}");
     let stat = store_call(&home, "file.stat", "shop/web", "/empty");
@@ -244,7 +238,7 @@ fn init_into_a_worker_s_store_copies_the_caller_s_folder() {
         &mut |_| {},
     )
     .unwrap_err();
-    assert_eq!(again.code, "Exists", "{}", again.message);
+    assert_eq!(again.code, "NameTaken", "{}", again.message);
     let holder = again.detail.get("holder").expect("holder detail");
     assert_eq!(holder.get_text("kind"), Some("project"), "{again:?}");
     assert_eq!(holder.get_text("name"), Some("web"));
@@ -697,9 +691,7 @@ fn a_part_whose_answer_is_lost_leaves_the_copy_unknown() {
         "{}",
         refusal.1
     );
-    // nothing resent or sent after it, nothing discarded: the copy stays;
-    // the project is certainly not in the Store (its Init was never sent),
-    // so the claimed home entry is removed
+    // nothing resent or sent after it, nothing discarded: the copy stays
     let seen = seen.lock().unwrap();
     let at_once = layerfs_store::project::parts::AT_ONCE;
     assert!(writes(&seen) <= at_once, "{:?}", seen.log);

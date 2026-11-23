@@ -33,11 +33,7 @@ fn home_on_box(tag: &str, address: SocketAddr) -> PathBuf {
     home::open(&home).unwrap();
     write_record(
         &paths::machine_record(&home, "box"),
-        &SdkValue::map([
-            ("name", t("box")),
-            ("platform", t("lima")),
-            ("vm_name", t("layerfs-00000000-box")),
-        ]),
+        &SdkValue::map([("name", t("box")), ("platform", t("lima"))]),
     )
     .unwrap();
     write_record(
@@ -52,7 +48,7 @@ fn home_on_box(tag: &str, address: SocketAddr) -> PathBuf {
             ("kind", t("sqlite")),
             ("binding", SdkValue::Bytes(vec![7; 16])),
             ("cursor", SdkValue::Bytes(vec![8; 32])),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
             ("machine", t("box")),
         ]),
     )
@@ -143,7 +139,7 @@ fn worker(meet: Meet) -> (SocketAddr, Arc<Mutex<Vec<String>>>) {
                     &mut stream,
                     &SdkValue::map([(
                         "value",
-                        SdkValue::map([("text", SdkValue::text("answered"))]),
+                        SdkValue::map([("answered", SdkValue::Bool(true))]),
                     )]),
                 )
                 .unwrap();
@@ -171,7 +167,7 @@ fn a_worker_call_dials_once_and_never_starts_its_machine() {
     let (address, log) = worker(Meet::Answer);
     let home = home_on_box("answer", address);
     let value = read(&home).unwrap();
-    assert_eq!(value.get_text("text"), Some("answered"));
+    assert_eq!(value.get("answered"), Some(&SdkValue::Bool(true)));
     let requests = log.lock().unwrap().clone();
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(requests[0], "store.call", "{requests:?}");

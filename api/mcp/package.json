@@ -17,8 +17,8 @@
     "test": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
-    "@layerfs/node": "file:../node",
-    "@modelcontextprotocol/sdk": "1.32.2"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "layerfs": "file:../node"
   },
   "license": "MIT"
 }

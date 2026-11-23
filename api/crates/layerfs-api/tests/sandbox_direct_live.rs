@@ -4,9 +4,8 @@
 //! daemon's own loopback port, as `forward` answers on `native`), and whose
 //! worker is a stand-in that refuses every call. Mount, status, a Commit of
 //! a file written into the Workspace, `sandbox.get`'s list and unmount then
-//! run from this process against the home folder, and no call is sent to
-//! the worker (the get dials it for overlay sizes, layerfs-project#164; the
-//! stand-in's hello stops it before a call). The Sandbox is created and closed by helper processes (this
+//! run from this process against the home folder, and the worker is never
+//! called. The Sandbox is created and closed by helper processes (this
 //! test binary run again), so this process opens it only through its
 //! forwarded record. It does not prove an `ssh -L` carries the port, nor
 //! a guest runtime (exec stays on the worker; `sandbox_direct.rs`).
@@ -76,8 +75,8 @@ fn helper() {
         _ => {
             ok(
                 home,
-                "sandbox.remove",
-                &[("sandbox", t("t1")), ("force", SdkValue::Bool(true))],
+                "sandbox.close",
+                &[("name", t("t1")), ("force", SdkValue::Bool(true))],
             );
         }
     }
@@ -154,20 +153,10 @@ fn a_forwarded_sandbox_s_workspace_calls_dial_its_daemon_from_here() {
         &[
             ("project", t("shop/api")),
             ("name", t("dev")),
-            ("from", t("main")),
+            ("from_branch", t("main")),
         ],
     );
-    // the native machine's daemon is a setting of its record
-    layerfs_api::call(
-        Some(&home),
-        "machine.update",
-        SdkValue::map([
-            ("machine", SdkValue::text("native")),
-            ("daemon", SdkValue::text(daemon.as_str())),
-        ]),
-        &mut |_| {},
-    )
-    .unwrap();
+    home::import_env(&home, &[("LAYERFS_DAEMON".to_owned(), daemon)]).unwrap();
     in_helper(&home, "create");
 
     // the record of a Sandbox on machine `box` whose daemon's port this
@@ -175,12 +164,7 @@ fn a_forwarded_sandbox_s_workspace_calls_dial_its_daemon_from_here() {
     let (address, log) = refusing_worker();
     write_record(
         &paths::machine_record(&home, "box"),
-        &SdkValue::map([
-            ("name", t("box")),
-            ("platform", t("lima")),
-            ("vm_name", t("layerfs-test-vm")),
-            ("state", t("running")),
-        ]),
+        &SdkValue::map([("name", t("box")), ("platform", t("lima"))]),
     )
     .unwrap();
     write_record(
@@ -223,57 +207,31 @@ fn a_forwarded_sandbox_s_workspace_calls_dial_its_daemon_from_here() {
                 ("name", t("one")),
             ],
         );
-        assert_eq!(mounted.get_text("workspace"), Some("t1:one"), "{mounted:?}");
+        assert_eq!(mounted.get_text("ws"), Some("t1:one"), "{mounted:?}");
+        assert_eq!(mounted.get_text("runtime"), Some("native"), "{mounted:?}");
         let directory = mounted.get_text("path").unwrap().to_owned();
         // its record is in the home's folder
         let records = std::fs::read_dir(paths::sandbox_dir(&home, "t1").join("workspace"))
             .unwrap()
             .count();
         assert!(records >= 1);
-        // an unchanged fresh fork names its head: the Layer it was forked at
-        let same = ok(&home, "workspace.commit", &[("workspace", t("t1:one"))]);
-        assert!(same.get_text("commit").is_some(), "{same:?}");
-        assert_eq!(
-            same.get("unchanged"),
-            Some(&SdkValue::Bool(true)),
-            "{same:?}"
-        );
         std::fs::write(Path::new(&directory).join("NEW.md"), "made\n").unwrap();
-        // `branch` and `branch_head` are in the long form only
-        let status = ok(
-            &home,
-            "workspace.status",
-            &[("workspace", t("t1:one")), ("detail", SdkValue::Bool(true))],
-        );
+        let status = ok(&home, "workspace.status", &[("ws", t("t1:one"))]);
         assert_eq!(status.get_text("branch"), Some("dev"), "{status:?}");
         assert!(status.get("branch_head").is_some(), "{status:?}");
         let committed = ok(
             &home,
             "workspace.commit",
-            &[("workspace", t("t1:one")), ("message", t("direct"))],
+            &[("ws", t("t1:one")), ("message", t("direct"))],
         );
-        // a new Commit: its id, and no `unchanged`
-        assert!(committed.get_text("commit").is_some(), "{committed:?}");
-        assert!(committed.get("unchanged").is_none(), "{committed:?}");
-        // no Workspace call so far went near the worker
-        let dialled = || log.lock().unwrap().clone();
-        assert!(
-            dialled().is_empty(),
-            "the worker was called: {:?}",
-            dialled()
+        assert_eq!(
+            committed.get_text("kind"),
+            Some("Committed"),
+            "{committed:?}"
         );
-        let got = ok(&home, "sandbox.get", &[("sandbox", t("t1"))]);
+        let got = ok(&home, "sandbox.get", &[("name", t("t1"))]);
         assert!(layerfs_api::json::print(&got).contains("t1:one"), "{got:?}");
-        // the get's one overlay-size inspect dials the machine's worker
-        // (layerfs-project#164); the stand-in's hello names no protocol, so
-        // no call is sent on it, and the list is answered anyway
-        let by_get = dialled();
-        assert!(by_get.len() <= 1, "{by_get:?}");
-        assert!(
-            by_get.iter().all(|request| request == "null"),
-            "the worker was called: {by_get:?}"
-        );
-        ok(&home, "workspace.unmount", &[("workspace", t("t1:one"))]);
+        ok(&home, "workspace.unmount", &[("ws", t("t1:one"))]);
         let read = ok(
             &home,
             "file.read",
@@ -284,18 +242,15 @@ fn a_forwarded_sandbox_s_workspace_calls_dial_its_daemon_from_here() {
             ],
         );
         assert_eq!(read.get_text("text"), Some("made\n"));
-        by_get
     });
     // the Sandbox is closed as the native one it is, whatever happened
     write_record(&path, &native).unwrap();
     in_helper(&home, "close");
     let sent = log.lock().unwrap().clone();
-    let by_get = match result {
-        Ok(by_get) => by_get,
-        Err(panic) => std::panic::resume_unwind(panic),
-    };
-    // nothing after the get dialled the worker, the close included
-    assert_eq!(sent, by_get, "the worker was called");
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+    assert!(sent.is_empty(), "the worker was called: {sent:?}");
     std::fs::remove_dir_all(&home).unwrap();
     std::fs::remove_dir_all(&folder).unwrap();
 }

@@ -27,10 +27,7 @@ fn sandbox_call(endpoint: &Endpoint, created: i64) {
         ("project", SdkValue::text("api")),
         (
             "store_record",
-            SdkValue::map([
-                ("name", SdkValue::text("shop")),
-                ("kind", SdkValue::text("sqlite")),
-            ]),
+            SdkValue::map([("name", SdkValue::text("shop"))]),
         ),
         (
             "project_record",
@@ -74,7 +71,7 @@ fn a_worker_inited_project_keeps_its_manifest() {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    layerfs_home::home::open(&scratch.join("home")).unwrap();
+    layerfs_control::migrate::open(&scratch.join("home")).unwrap();
     let manifest = SdkValue::Bytes(vec![1, 2, 3]);
     let path = paths::project_record(&root, "shop", "api");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

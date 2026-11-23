@@ -1,0 +1,366 @@
+# LayerFS GC candidates — project dsh/tokenaissance
+# session branch: dsh.68980c4770584081bc624e84a6a062ef
+# 359 Branches whose head is not in main's 136-Commit history (generated 2026-11-22).
+# differs_from_main: 1 = tree differs from main, 0 = identical. last_message is cut at 100 chars.
+# Not listed here: main, the 33 Branches reachable from main, and dsh.* Branches at main's head.
+# Recommendation: keep dsh.session.* (session records, incl. this session's).
+kind	branch	head	last_commit_date	differs_from_main	last_message
+fix	fix-691-expected-base	12988611c4ee	2026-11-15	1	fix(publish): refuse stale-base publishes with expected-base CAS (#691)  branch.publish is a compare
+fix	fix-project-manifest-detection	12b18b0961f5	2026-11-21	1	c8: drop a build cache
+fix	fix711-api	126da49536b4	2026-11-16	1	fix(gc): close #711 API and acceptance gaps  - docs: store.compact is local-only Unsupported for a s
+fix	fix711-bench	120015c94bb9	2026-11-16	1	tools/ci: refuse opt-in arms before building
+fix	fix711-bench3	12c1bcb00afb	2026-11-16	1	docs: medium is a positional script argument
+fix	fix711-clippy4	120fe1548e55	2026-11-16	1	clippy: fix pre-existing warnings so -D warnings passes  - sqlite compact/run.rs: question_mark (op.
+fix	fix711-conc	12d812591a5d	2026-11-16	1	branch: correct the unfiltered-read comment
+fix	fix711-contract	1236c0df58c2	2026-11-16	1	fix(gc): close PR #711 contract/migration gaps  - gc_op.usename in both schemas, the PG mark writer,
+fix	fix711-docs	12955309f113	2026-11-16	1	docs(gc): A8 in the #42 request
+fix	fix711-docs4	12951414f7b8	2026-11-16	1	docs(skills): refresh method reference pages to the 83-call surface
+fix	fix711-hyg	122a168502ce	2026-11-16	1	revert(storage): take the delta cycle-detection fix out of the GC PR
+fix	fix711-install	12f9403e810d	2026-11-16	1	tools/bench/installlane: install-only lane prototype + 10 GiB measurements; G7 defers install-only
+fix	fix711-life	12e879afc506	2026-11-16	1	fix(gc): admission and intent lifecycle for #711  - Fill owner_runtime/owner_boot (pid/start/PID-nam
+fix	fix711-none	1244bbb8334c	2026-11-16	1	restore .git/index to the pre-verification bytes (no source change)
+fix	fix711-opencost4	12cc152c93a4	2026-11-16	1	postgresql_open_cost: keyword + URL conninfo forms pass (5 passed each); cargo check --workspace exi
+fix	fix711-perf	12ee6e00335b	2026-11-16	1	perf(gc): metadata-only mark closure, prefix kept-waste, COPY visited, build prototype
+fix	fix711-perf2	121a2f15abfe	2026-11-16	1	revert: keep the #711 slice byte-identical outside the files it changes  cargo fmt --all (rustfmt 1.
+fix	fix711-pg	12b8665d073a	2026-11-16	1	fix(gc): read the compaction generation once, under the exclusive key  The generation is re-read aft
+fix	fix711-pgtest	12631e6e5b84	2026-11-16	1	style(tests): rustfmt the E55000 fixture check
+fix	fix711-remote	1287d209cd48	2026-11-16	1	fix711-remote: document remote SQLite compaction (D5) and measure markBytes  store.compact of a sqli
+fix	fix711-report2	129c4b59c7b6	2026-11-16	1	docs(gc): name the #711 report zero-reason additions
+fix	fix711-rm	120cfdc932eb	2026-11-16	1	fix(gc): a pending project.delete retry settles the marker and keeps the entry  Follow-up to the PR 
+fix	fix711-spec	1285e605125a	2026-11-16	1	docs(gc): close the A5 quotation in the #42 decision note
+fix	fix711-split	1236d65121a9	2026-11-16	1	restore .git/index to main's bytes (git status refreshed the stat cache)
+fix	fix711-sqlite	12dc14b11e31	2026-11-16	1	test(gc): regenerate the SQLite compaction golden transcript for the none-path scratch (peakTempByte
+fix	fixr1-42	129f027d4387	2026-11-16	1	F42 Round-1: capacity classification, §10 predicate, PG kept_node settle, explicit store_policy copy
+fix	fixr1-43	120ea1e9138f	2026-11-16	1	F43-2: prove the retire intent is visible inside the marker transaction
+fix	fixr1-44	12426d2e0fb3	2026-11-16	1	guard: tighten the allow-list wording and clippy-clean the test
+fix	fixr1-45	128cc7cd0458	2026-11-16	1	F45-1: rustfmt the admission signature and worker_project calls
+fix	fixr1-47	123da9c5b16d	2026-11-16	1	test: path_removal and SDK path families, cargo check --workspace (exit 0)
+fix	fixr1-48	12ea39a2e290	2026-11-16	1	restore .git index stat cache touched by a local git status
+fix	fixr1-49	12783888c9ce	2026-11-16	1	F49-2 tests: keep the staged request distinct and reopen before the recovery run
+fix	fixr1-50	123d2c1dee7c	2026-11-16	1	fix(#50): PostgreSQL compaction Round-1 F50-2..11  F50-4 ownership precheck; F50-5 gc_op table finge
+fix	fixr1-51	1213aa54b595	2026-11-16	1	docs(#51 R1): machine row names stats, space and files
+fix	fixr1-52	128ddd752640	2026-11-16	1	F52-6: tidy the AGENTS CI sentence
+fix	fixr1-pginit	12a95b63e3ba	2026-11-16	1	F50-1 follow-up: restore .git/index to the branch base  A git command in the workspace refreshed the
+fix	fixr2-43	120794668f2c	2026-11-17	1	F43R2-1/F43R2-2: name Unknown GC detail and see live Init/merge  F43R2-1 (§10 A6): HistoryError::Unk
+fix	fixr2-44	126f9243c75c	2026-11-17	1	fix(persistence): #44/#45 round-2 read fence, retired backup heads, inline guard  F44R2-1: PostgreSQ
+fix	fixr2-45	12fbfc773896	2026-11-17	1	rustfmt the F45R2-2/3 changes
+fix	fixr2-46	12d9639ebc5e	2026-11-17	1	chore(#46 r2): restore .git/index to the branch base
+fix	fixr2-47	125f89fab84e	2026-11-17	1	fix(#47): restore only-symlink strictness, lenient marker existence, project-wide remove_file (#47 R
+fix	fixr2-49	1232319559eb	2026-11-17	1	Restore the imported .git index after workspace git reads
+fix	fixr2-50	123a2ff9b23e	2026-11-17	1	fix(store): #42/#50 round-2 — lost-COMMIT terminate, A8 columns, Phase C lineage/phase  F42R2-1: imp
+fix	fixr2-51	12a9510a10a9	2026-11-17	1	F51R2-1/2/3: regenerate node typings and python stubs from the 83-call table; regenerate coverage.md
+fix	fixr2-52	124cd7bf9388	2026-11-17	1	fix #52/#48 round-2 (F52R2-1..4, F48R2-1): derive the matrix report's verified counts from the test 
+fix	fixr3-43	12e834134847	2026-11-17	1	Restore the Git index unchanged
+fix	fixr3-44	122e15d7d904	2026-11-17	1	test(#44 round 3): PostgreSQL statement-schema, gc fence, compaction, calls and saved reads (all gre
+fix	fixr3-45	128e61a33007	2026-11-17	1	fix #45 round-3: formatting and worker-op docs
+fix	fixr3-46	127e6f7e49e5	2026-11-17	1	F46R3-1: regenerate the T12.3a matrix report for the new prune test (#46)
+fix	fixr3-49	125c76ce3fe7	2026-11-17	1	restore the Git index unchanged (#49 round 3)
+fix	fixr3-51	12ebf0439213	2026-11-17	1	docs: compact module note names an in-process call Busy, not InUse
+fix	fixr3-52	122cdc91330d	2026-11-17	1	docs(#726): mark the dated qualification and interface reports pre-#726  The postgresql Cargo featur
+fix	fixr4-42	122df99487a9	2026-11-17	1	docs(#42): fix round-4 findings in gc-42 decisions (A11 test path, A8 column attribution, A counts)
+fix	fixr4-43	129ccd5e1e57	2026-11-17	1	chore(#43): restore the .git index cache touched by local git reads  No code change: the working tre
+fix	fixr4-49	1261ccde6d5c	2026-11-17	1	Fix #49 round 4: verify keeps quick_check separate (F49R4-1); mmap the attached sealed source (F49R4
+fix	fixr4-50	12c9ab78bfd2	2026-11-17	1	Fix #50 round-4 findings: PG store.status returned/idle state, sync off floor, resumed physicalShrin
+fix	fixr4-52	12780a4178a8	2026-11-17	1	chore: restore the pre-analysis .git/index again after cargo's stat refresh
+fix	fixr5-42	12cea9b21d7a	2026-11-17	1	docs(r5-42): receipt vintage caveat in gc-42 evidence basis (F52R5-2 wording); cargo check --workspa
+fix	fixr5-43	1266b28b9200	2026-11-17	1	F43R5-1/F43R5-2: name the project on init and delete Unknown refusals; tests pass
+fix	fixr5-49	124b565f447c	2026-11-17	1	fix(#49): make a Store replacement between seal and install a Conflict  The §7 step 7 install fence 
+fix	fixr5-50	12da9f6ffe2d	2026-11-17	1	Fix #50 round-5: legacy standby list, reader holder, Phase M status, A8 wording  - F50R5-1: a legacy
+fix	fixr5-51	121751691772	2026-11-17	1	fix(mcp): admin lists 76 tools, not 82 (F51R5-1) + tests (no source change)
+fix	fixr5-52	1251cf43c9c4	2026-11-17	1	fix(r5-52): seven gc_op columns, receipt vintage in §13/AC-57, quick-lane target count  - F52R5-1: g
+fix	fixr6-41	125d1497b4b3	2026-11-17	1	restore .git/index after read-only git inspection
+fix	fixr6-42	12001542967a	2026-11-17	1	restore .git/index to pr711-head9 (stat-cache churn from a read-only git status; not part of the rou
+fix	fixr6-43	12915e9797e4	2026-11-17	1	restore .git/index content after in-sandbox cargo build
+fix	fixr6-50	12bc4acf63e6	2026-11-17	1	restore .git/index after read-only git inspection
+fix	fixr6-benchjson	12d8d24aecd9	2026-11-17	1	restore .git/index to the parent snapshot  A git status run inside the workspace refreshed the track
+cycle	cycle-1	126700fc1cee	2026-11-14	1	agent 1: add docs/verification/agent-1.md
+cycle	cycle-2	12447df4f16a	2026-11-14	1	agent 2: add docs/verification/agent-2.md
+cycle	cycle-3	12ecdc8ecbca	2026-11-14	1	agent 3: add docs/verification/agent-3.md
+cycle	cycle-4	12d168ab3203	2026-11-14	1	agent 4: add docs/verification/agent-4.md
+cycle	cycle-5	12f210db3872	2026-11-14	1	agent 5: add docs/verification/agent-5.md
+cycle	cycle-6	12d9b5a4538d	2026-11-14	1	agent 6: add docs/verification/agent-6.md
+cycle	cycle-7	1287688d0f96	2026-11-14	1	agent 7: add docs/verification/agent-7.md
+cycle	cycle-8	125db4d80634	2026-11-14	1	agent 8: add docs/verification/agent-8.md
+task	task-c3	12f0cddc84f6	2026-11-21	1	c3: volume labels and orphan volume doctor
+task	task-c4	120393e9ba2c	2026-11-21	1	c4: home.layout id cross-check
+task	task-c5	126c00356967	2026-11-21	1	c5: versioned readme worker roots
+task	task-c6	12527bf99c7b	2026-11-21	1	c6: a markerless home is DataWithoutMarker
+task	task-c7	12626c3ff4b0	2026-11-21	1	c7: project record completeness
+task	task-c8	12b18b0961f5	2026-11-21	1	c8: drop a build cache
+task	task-g11	12d867188a86	2026-11-15	1	test harness: short TMPDIR for Unix sockets; docs match (quick suites run)
+task	task-g11-merged	12ad48e716fe	2026-11-15	1	merge main into task-g11: Store test harness and testing docs
+task	task-g13-clean	1235b8376330	2026-11-15	1	T-G13: gate store.compact's PostgreSQL path behind the postgresql feature  layerfs-store has no defa
+task	task-g13-pub2	1299885ee977	2026-11-15	1	T-G13: gate store.compact's PostgreSQL path behind the postgresql feature  Rebased onto current main
+task	task-g15-mainview	1297191f2190	2026-11-15	1	Resolve merge conflict: adopt main's equivalent positive timeout (Some(60_000)) for the shop fixture
+task	task-g17-clean	12f4847104d9	2026-11-15	1	docs: document the Store ext4 CI lane in testing.md
+task	task-g2-norm	127284ba9efb	2026-11-15	1	T-G2: path args log the normalized byte length (strip one leading /, §4.3); tests: gc_trace+logs+lib
+task	task-g2-norm-merged	128ccff1ebee	2026-11-15	1	merge current main into the normalized-path redaction
+task	task-g38b	125d6f3104da	2026-11-15	1	T-G38: keep the AC-44 status counts consistent
+task	task-g38b-merged	128162224eed	2026-11-15	1	T-G38: merge AC-44 PG kill/lost-COMMIT tests onto current main
+task	task-g49	1256882647ca	2026-11-15	1	tests: append conninfo options for URL and libpq keyword forms  Extract with_option into tests/pg_do
+task	task-g49-merged	121c2d7cea32	2026-11-15	1	merge main into task-g49: conninfo option helper for URL and keyword forms
+task	task-g5	1234af57711f	2026-11-15	1	docs(gc): spec corrections for op_id/Unknown/Removed/mv (exit 0)
+task	task-g58	1204f78b8f96	2026-11-15	1	clippy: fix 11 warnings in layerfs-persistence and layerfs-store-service (libs clean; sqlite_compact
+task	task-g58-merged	123151bc0f2a	2026-11-15	1	merge clippy fixes from task-g58 with current main
+task	task-g58-merged2	12326d6ea702	2026-11-15	1	merge clippy fixes with main@327b250e
+task	task-g59	12e704124b7a	2026-11-15	1	G59: cover both conninfo endpoint forms in the existing four unit tests  The target keeps its test c
+task	task-g59-merged	1298eb39a9dd	2026-11-15	1	Merge main (task-g60) into task-g59 before publishing G59
+task	task-g65	12084b82cdfd	2026-11-15	1	T-G65: rustfmt the process-kill test (cargo fmt clean)
+task	task-g65-merged	12e08cee9e5a	2026-11-15	1	T-G65: merge current main into the AC-01 real-process kill branch
+task	task-g65-merged2	12356c837a4b	2026-11-15	1	T-G65: merge main with the formatted AC-01 real-process kill branch
+task	task-g66	128c8882ac1f	2026-11-15	1	gc: measure the 50 GB SQLite compaction capacity arm (T-G66)
+task	task-g66b	128930697499	2026-11-15	1	gc: measure the 50 GB SQLite compaction capacity arm (T-G66)  Add sqlite_compact_capacity_measure_50
+task	task-g67	12b09c1dd186	2026-11-15	1	tests(postgresql_doctor_physical): assert proxy bytes>0 in the four proxy-rewrite tests  A direct co
+task	task-g69	12c1df8fca40	2026-11-15	1	docs(gc): add branch retirement procedure to operator runbook
+task	task-g6a	128371c411ea	2026-11-15	1	PostgreSQL GC runtime evidence: admission fix, epoch fence, mark  PostgreSQL 17.10 (PGDG, 127.0.0.1:
+task	task-g70	12c62e9646d4	2026-11-15	1	gc report: clippy clean after G58/G63 (drop stale 11-warning gap)
+task	task-g71	1215412893d4	2026-11-15	1	clippy: clear the two warnings blocking a clean -D warnings run  - layerfs-persistence tests/sqlite_
+task	task-g72	127f5622d43a	2026-11-15	1	T-G72: remove stray empty CARGO_HOME= dirs from the workspace commit
+task	task-g74	128899cd749e	2026-11-15	1	G74: emit T-G61 capacity paragraph from the matrix report generator
+task	task-g75	12da44dbd925	2026-11-15	1	T-G75: final audit of main 32ae51ca - re-ran suites, clippy, matrix and closeout
+task	task-spec-usename	12186e95705a	2026-11-15	1	docs(gc): add gc_op.usename and align runbook (exit 0)
+task	task-t1.2c	1296eeb7ebc1	2026-11-15	1	T1.2c: reflow the create doc line
+task	task-t1.2c-merged	126f49b83ccd	2026-11-15	1	T1.2c merge: commit_branch reads the position once more (10 -> 11)
+task	task-t1.2c-merged2	1281fb7ae9be	2026-11-15	1	T1.2c: merge current main (store-service removal)
+task	task-t1.2d	12796b76c911	2026-11-15	1	schema: end the trace_salt strip at its own line, not at the comma newline (T1.2d)
+task	task-t1.2d-merged	12eee0da5b88	2026-11-15	1	T1.2d: merge current main
+task	task-t1.4	120082531289	2026-11-15	1	T1.4: position-state backfill for Stores written before it  Adds history_meta.next_history_serial (S
+task	task-t1.4-final	128b8189bf39	2026-11-15	1	T1.4: position-state backfill for Stores written before it  Adds history_meta.next_history_serial (S
+task	task-t1.6	1269d11d06cf	2026-11-15	1	docs(gc): rollout and rollback plan (exit 0)
+task	task-t1.7	128c60bae9af	2026-11-15	1	T1.7: a migrated Store with any other schema difference is still refused  Adds a negative fixture ne
+task	task-t1.7-merged	12b0770605ee	2026-11-15	1	merge task-t1.7 (lineage_backfill fixture + doctor ALTER-migration admission) into main 32cfb540
+task	task-t1.7-merged2	123f88ffb7f0	2026-11-15	1	merge task-t1.7 (lineage_backfill fixture, doctor ALTER-migration admission, negative schema test) i
+task	task-t1.7-merged3	12fb3019bdcd	2026-11-15	1	merge task-t1.7 into main 323a023d (lineage_backfill fixture, doctor ALTER-migration admission, nega
+task	task-t11-contract	129519adb0a6	2026-11-15	1	docs(gc): API contract draft (exit 0)
+task	task-t11-contract-sync	129d2067e941	2026-11-15	1	docs(gc): API contract draft (exit 0)
+task	task-t11.2b	126056a9bbd1	2026-11-15	1	T11.2: CLI/SDK dispatch, results, errors and help for the four GC calls  - branch.remove and project
+task	task-t12-matrix	1250a1d1f3d9	2026-11-15	1	docs(gc): acceptance matrix draft (exit 0)
+task	task-t12-matrix-merged	12caaf52cb73	2026-11-15	1	merge task-t12-matrix with main
+task	task-t12-matrix-pub1	12fcf192a107	2026-11-15	1	docs(gc): acceptance matrix (exit 0)
+task	task-t12.2-resolved	1261004741e9	2026-11-15	1	T12.2: intents are released before the seal (T-G5)
+task	task-t12.3b-tidy	12fe9330fb64	2026-11-15	1	T12.3b: drop the stray trailing blank line in the round-trip test
+task	task-t12.3c-report-count	12af91584218	2026-11-15	1	T12.3c: correct the report's compact_report_status count
+task	task-t12.4a	12ad273e1b7f	2026-11-15	1	docs(gc): fix §5 after T-G13/T-G14 and add .git/index to .lww  §5: the default-feature break is fixe
+task	task-t12.4a-merged	1202ab36059a	2026-11-15	1	merge main 32cba47d into task-t12.4a (report §5 + .lww git index)
+task	task-t13b	12c0efe9dd2c	2026-11-15	1	docs(gc): spec-gap decisions (exit 0)
+task	task-t2.4-ctors	122dbd2ef7a1	2026-11-15	1	T2.4 follow-up: public constructors for non-exhaustive refusal contexts (NameHolder::new, NameTakenS
+task	task-t2.4-ctors-merged	121f973a0d9e	2026-11-15	1	merge current main into T2.4 constructors before publish
+task	task-t2.4-ctors-test	128627714878	2026-11-15	1	T2.4 follow-up: cross-crate constructor tests for the non-exhaustive refusal contexts; cargo check -
+task	task-t2.4-ctors-test-merged	128ee8f6021a	2026-11-15	1	merge current main into T2.4 constructor tests before publish
+task	task-t2.4-ctors-test-merged2	1263756fdf79	2026-11-15	1	merge current main into T2.4 constructor tests (2)
+task	task-t2.4-ctors-test-merged3	12ebeb2dfbef	2026-11-15	1	merge current main into T2.4 constructor tests (3)
+task	task-t2.4b	121364da6ed4	2026-11-15	1	T2.4b: constructors for non_exhaustive name/removed contexts (cargo test -p layerfs-history construc
+task	task-t3	12f7cd6acf03	2026-11-15	1	T3: branch.remove marker + epoch, branch_live visibility, typed NameTaken, doctor commit.branch_id, 
+task	task-t3-final	128627567ca1	2026-11-15	1	T3 final on current main: branch.remove marker+epoch, branch_live visibility, typed NameTaken (branc
+task	task-t3-final2	12275f378234	2026-11-15	1	T3 merged with main (T1.4 backfill on top of T4/T2.4b)
+task	task-t3-final3	1277cd10a701	2026-11-15	1	T3 merged with main (T1.6 rollout docs only)
+task	task-t3-final3r	1247e8af15b9	2026-11-15	1	Move mark_branch_removed before reserve_inodes so T5's catalog methods merge at the tail
+task	task-t3-final4	124dc7961c94	2026-11-15	1	T3 merged with main (T5 remove_file)
+task	task-t3-final5	12dabb46734b	2026-11-15	1	T3 merged with main (history contract constructor tests only)
+task	task-t3-merged	1251bb67614e	2026-11-15	1	Merge published main into T3; typed NameTaken constructors + empty-detail Conflict/ReservedName; mer
+task	task-t3-resolved	12f4b761f9db	2026-11-15	1	Place typed project name_taken away from T4 constants; match main epoch init exactly
+task	task-t4	12d1776408e2	2026-11-15	1	T4: project.delete marker, layer_stack visibility and retry classification; persistence 5/5, store-s
+task	task-t4-merged	121ae134963f	2026-11-15	1	T4: embed filtered statement texts in the guard test; persistence 5/5, store-service 1/1, store-serv
+task	task-t4-merged2	127c7e78db5d	2026-11-15	1	merge T4 project.delete onto current main (T2.4b)
+task	task-t4.5c-resolved	129a9a73941d	2026-11-15	1	T4.5c: resolve the merge conflict on .git/index (keep main's index cache)
+task	task-t4.6	1274a35aa827	2026-11-15	1	project.delete: admit the project scope before sidecar and marker (T4.6)  The control-layer home pat
+task	task-t4.6-merged	12e8a214b4bc	2026-11-15	1	merge task-t4.6 (control project.delete admission) with current main
+task	task-t5	128e428570f0	2026-11-15	1	T5: project.remove_file visibility (marker, frontier, read/stat/list/glob)  Provider: path_removed u
+task	task-t5-final	12224dd5e396	2026-11-15	1	T5: register position_next_serial
+task	task-t5-merged	127b614cd434	2026-11-15	1	T5 merge: reconcile with main T4 and non-exhaustive refusal context  Drop the duplicate project_epoc
+task	task-t5-publish	12c88ba92456	2026-11-15	1	merge T5 into main after T1.6
+task	task-t5.7b	12060d1fe119	2026-11-15	1	operator: test-only installed Store fixture module
+task	task-t7.2	12a41bf33f6f	2026-11-15	1	T7.2: object/pack closure + keptWaste + live-heads digest; kept_node 7 + kept_objects 5 tests pass, 
+task	task-t9b	12a238bc73a8	2026-11-15	1	T9: PostgreSQL store.compact (§8 Phase M/A/B/C)  Phase M records the mark tuple first and the persis
+task	task-t9c	12d3f65a970d	2026-11-15	1	T9: PostgreSQL store.compact (§8 Phase M/A/B/C)  Phase M records the mark tuple first and the persis
+task	task-t9d	12fa66eef12c	2026-11-15	1	T9: note the same-session resume test in the PostgreSQL rebuild note
+task	task-t9e	1225694fd77f	2026-11-15	1	T9: record the final rebased-main test counts
+gc/g	g57-cache	1201eee016d4	2026-11-15	1	scratch: fuser git db (build cache, not for publish)
+gc/g	g60-scratch	12abedb76f79	2026-11-15	1	probe
+gc/g	g70-fix	126efc8aa50e	2026-11-15	1	resolve report merge: main@32957696 with the G58/G63 clippy fix
+gc/g	g70-fix-b	1211b6c563e2	2026-11-15	1	resolve report merge: main@32957696 with the G58/G63 clippy fix
+gc/g	g70-merged	124038e10eaa	2026-11-15	1	merge g70-fix (clippy report fix) with main@32957696
+gc/g	gc-baseline	12e5b78f5d96	2026-11-15	1	docs(gc): 2.0 GC implementation baseline (git 2685a9769, tag gc-2.0-baseline)
+gc/g	gc-contract	1272d66713a6	2026-11-15	1	T2.1/T2.2: history contract stubs and typed NameTaken/Removed (cargo check -p layerfs-history -p lay
+gc/g	gc-contract-sync	12147e84bd04	2026-11-15	1	T2.1/T2.2 sync (git 8369143a8)
+gc/g	gc-frontier	125fc26499e6	2026-11-15	1	docs(gc): define the remove_file frontier and the derived-tree whiteout
+gc/g	gc-frontier-3	1215fb7c3395	2026-11-15	1	docs(gc): record the re-creation rule, decision range and report fields (git 8fbe600b5)
+gc/g	gc-frontier-4	12a99e327e67	2026-11-15	1	docs(gc): close the remaining review gaps (git 074ec53b3)
+gc/g	gc-frontier-5	1252f067b686	2026-11-15	1	docs(gc): serial frontier, marker epoch, repeated remove_file (git 2d5fd5dbd)
+gc/g	gc-frontier-6	12dc27a192c7	2026-11-15	1	docs(gc): marker cleanup, delete ordering, digest and advisory keys (git 0f1a6c92d)
+gc/g	gc-frontier-7	12d15dce0863	2026-11-15	1	docs(gc): close the D-group review nits (git b632cbc31)
+gc/g	gc-frontier-git	125700197119	2026-11-15	1	docs(gc): define the remove_file frontier and the derived-tree whiteout (git a2f51ed3)
+gc/g	gc-phase-a	12d348d7974f	2026-11-15	1	docs(gc): freeze the contract and define the position state (Phase A, git af6a70a7c)
+gc/g	gc-phase-b	128829a8f7ca	2026-11-15	1	docs(gc): SQLite layout, writer lane and artifacts (Phase B, git 42766c7d0)
+gc/g	gc-phase-c	121781b46326	2026-11-15	1	docs(gc): PostgreSQL mark, delta swap and cleanup (Phase C, git cabde0ca9)
+gc/g	gc-phase-d	125e597ace4e	2026-11-15	1	docs(gc): path-aware mark and complete history closure (Phase D, git a53a8105e)
+gc/g	gc-phase-e	126e4509a08f	2026-11-15	1	docs(gc): API and acceptance matrix (Phase E, git 2a88732c9)
+gc/g	gc-phase-f	12fb54f9eba2	2026-11-15	1	docs(gc): second review round fixes (Phase F, git cbeeb7dfa)
+gc/g	gc-phase-g	121807ccbebd	2026-11-15	1	docs(gc): third review round fixes (Phase G, git c4e63fbb3)
+gc/g	gc-phase-h	1256e215a3b9	2026-11-15	1	docs(gc): fourth review round fixes (Phase H, git 742f2d795)
+gc/g	gc-phase-i	12f42d42ada2	2026-11-15	1	docs(gc): fifth review round fixes (Phase I, git b8fc8d703)
+gc/g	gc-phase-j	123be345a19c	2026-11-15	1	docs(gc): sixth review round fixes (Phase J, git 6a257ea00)
+gc/g	gc-phase-k	1230b95ae7a7	2026-11-15	1	docs(gc): seventh focused round fixes (Phase K, git 18ec37f2d)
+gc/g	gc-phase-l	12a83a22897b	2026-11-15	1	docs(gc): seventh round completion (Phase L, git f37e7beed)
+gc/g	gc-phase-m	1220f3154fe4	2026-11-15	1	docs(gc): seventh-round acceptance rows (git ed14ed53b)
+gc/g	gc-schema	12bba5951f90	2026-11-15	1	T1 schema tables (git 4bbd3fa34)
+gc/g	gc-schema-columns	12d93cbb1043	2026-11-15	1	T1.2a columns (git a6d84131b)
+gc/g	gc-t13	1230f43ea979	2026-11-15	1	T13: operator runbook for GC compaction and removals (git 4e65ebbae)
+gc/g	git-head-fix	12dfa4b65736	2026-11-15	1	git: point HEAD and layerfs_v2_0_0 at cb8ced9d3
+gc/g	git-unshallow	1270b0e85bb9	2026-11-15	1	git: unshallow layerfs_v2_0_0 history (5199 commits)
+env-test	env-test-build	12e0c72e2d9e	2026-11-15	1	env test: build artifact
+env-test	env-test-rust-build	12ef4515fb1c	2026-11-15	1	env test: rust build
+env-test	env-test-rust-test	12af3d2d3226	2026-11-15	1	env test: rust test
+env-test	env-test-test	1286fa50a428	2026-11-15	1	env test: test report
+sync	sync-8cfb6e2	12d6c6c750aa	2026-11-14	1	sync layerfs_v2_0_0 to 8cfb6e2 (#656, #682)
+sync	sync-cb8ced9d3	12f16c22181e	2026-11-15	1	sync: layerfs @ cb8ced9d3 (Merge #688)
+sync	sync-upstream-7d2ac9	12ad1e204839	2026-11-18	0	sync upstream layerfs_v2_0_0 7d2ac98 (2026-11-18)
+research	research-pingcap	129d30176ff4	2026-11-16	1	docs: polish PingCAP study wording
+agent	agent-workspace-position	125973e3acc9	2026-11-17	1	docs: index the agent-workspace position note
+misc	clean-fetch-head	12265d5cc614	2026-11-15	1	git: drop FETCH_HEAD left by the temporary sync daemon
+misc	gw1	127e57068c8d	2026-11-14	1	gw test
+misc	impl-freshcopy	12b4547a932f	2026-11-16	1	bench: the fresh peak and disk model
+misc	int-1-2	128aef35c843	2026-11-14	1	Merge cycle-1 and cycle-2
+misc	int-1-3	129905bf32f3	2026-11-14	1	Merge int-1-2 and cycle-3
+misc	int-1-4	12a4c9f4a875	2026-11-14	1	Merge int-1-3 and cycle-4
+misc	int-1-5	122844b782d3	2026-11-14	1	Merge int-1-4 and cycle-5
+misc	int-1-6	12f578a5c2e1	2026-11-14	1	Merge int-1-5 and cycle-6
+misc	int-1-7	12ca2e29e9ae	2026-11-14	1	Merge int-1-6 and cycle-7
+misc	int-1-8	129d3c495f12	2026-11-14	1	Merge int-1-7 and cycle-8
+misc	integ-g14b	12baab9675b5	2026-11-15	1	merge main 32927884 into integ-g14
+misc	integ-g6a	12e3f1246fed	2026-11-15	1	Merge main into task-g6a: PG GC runtime evidence
+misc	integ-t11.2b	1294190b2ed0	2026-11-15	1	merge main into T11.2b
+misc	main-fix	12c0a7b8797e	2026-11-15	1	resolve bind.rs: keep T5.5 whiteout and T6 mount intent
+misc	merged-t10.5b	126b8fe28778	2026-11-15	1	T10.5: PostgreSQL store.status compaction-op projection
+misc	merged-t10.5c	12f80d29dfdf	2026-11-15	1	T10.5: merge main into the PostgreSQL store.status projection
+misc	pingcap-layerfs-deep	12f4e4626d2a	2026-11-16	1	docs: link the drive9 LayerFS deep dive
+misc	pr711-head2	12acab52a4a6	2026-11-16	1	PR #711 head 7223b8d3 exact snapshot (deletions applied)
+misc	pr711-head3	1201e4527655	2026-11-16	1	PR #711 head 11c1896a01 exact snapshot
+misc	pr711-head4	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	pr711-head5	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	pr711-head6	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	pr711-head7	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	pr711-head8	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	pr711-head9	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r1-41	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r1-42	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-43	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-44	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-45	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-46	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-47	120c59759490	2026-11-16	1	r1-47 review: remove scratch probe tests (no net change)
+misc	r1-48	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-49	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-50	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-51	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r1-52	12d276e2190e	2026-11-16	1	PR #711 head e824e8a747 exact snapshot
+misc	r2-42	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-43	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-44	122b54fc20f6	2026-11-17	1	r2-44 review: cargo check --workspace (exit 0), visibility_guard/branch_removal/project_delete/sqlit
+misc	r2-45	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-46	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-47	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-48	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-49	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-50	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-51	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r2-52	126d2796b7dd	2026-11-17	1	PR #711 Round-1 fixed head 43e72cf5 snapshot
+misc	r3-42	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-43	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-44	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-45	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-46	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-47	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-49	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-50	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-51	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r3-52	1280f9b1df18	2026-11-17	1	PR #711 Round-2 fixed head d5cc1503 snapshot
+misc	r4-42	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-43	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-44	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-45	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-46	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-47	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-48	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-49	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-50	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-51	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r4-52	12c48b870ea8	2026-11-17	1	PR #711 Round-3 fixed head a536f920 snapshot
+misc	r5-42	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-43	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-44	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-45	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-46	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-47	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-48	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-49	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-50	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-51	12020f69bea9	2026-11-17	1	PR #711 Round-4 fixed head b357463b snapshot
+misc	r5-52	121fed825c05	2026-11-17	1	round-5 review runs on head8 (exit 0)
+misc	r6-42	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-43	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-44	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-45	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-46	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-49	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-50	125cbf7e7723	2026-11-17	1	round-6 review runs on pr711-head9 (cargo check exit 0; PG suites 69 passed; no product changes)
+misc	r6-51	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r6-52	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-a	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-b	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-c	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-d	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-e	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-f	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	r7-arch-g	12d00e1c3102	2026-11-17	1	PR #711 Round-5 fixed head 7702bb21 snapshot
+misc	restore-g32	12486db175b8	2026-11-15	1	tests: pg_doctor restricted role accepts the libpq keyword URL form
+misc	restore-t1.3b-and-usename	1247238fe770	2026-11-15	1	merge task-t1.3b PostgreSQL GC schema with task-spec-usename docs
+misc	restore-t1.3b-t1.2b-usename	12bcb18b9297	2026-11-15	1	merge task-t1.2b (SQLite old-format columns) with T1.3b + docs
+misc	rh-chain	126c954bf131	2026-11-21	1	caveats: scope, trust budget, the gap nobody closed
+misc	rh-dispute-final	127ea0b269b4	2026-11-21	1	dispute (dry run): kernel rejects
+misc	rh-ev-challenge-integrity	124e7d24e48e	2026-11-21	1	evidence/challenge-integrity: reproduced locally, sha256 bd484ac9… matches, 5 statements are sorryAx
+misc	rh-ev-conleche	12b6e4c99a35	2026-11-21	1	evidence/con-leche: accept 1,468,418 declarations; --compare justifies 5/5
+misc	rh-ev-conron	1250990dcaff	2026-11-21	1	evidence/con-ron: declined (checker limitation, kept as a negative result)
+misc	rh-ev-lean4lean	12d74e63c021	2026-11-21	1	evidence/lean4lean: accept 175,187/175,187
+misc	rh-ev-leankernel	12aaaed5cfeb	2026-11-21	1	evidence/lean-kernel: running (recorded as running, not as accept)
+misc	rh-ev-nanoda	121903806264	2026-11-21	1	evidence/nanoda: accept, 27m42s on 80 threads
+misc	rh-rev2	128b5b170cf8	2026-11-21	1	rev2 (simulated): simplified argument; statements untouched
+misc	rh-verdict-final	121e2a08b86b	2026-11-21	1	verdict: record the local challenge-integrity run
+misc	t1	12adebed110f	2026-11-14	1	tokenaissance: add T.md
+misc	t10-a	1282df66edd1	2026-11-15	1	resolve lib.rs: export CompactOpStatus and the shared report
+misc	t10-b	12ff63f7e8b3	2026-11-15	1	resolve lib.rs: export CompactOpStatus and the shared report
+misc	t104-fixed	12d2810546ff	2026-11-15	1	merge main@322e5644 into T10.4 PostgreSQL compaction metrics
+misc	t104-fixed2	1202e8e71ecd	2026-11-15	1	merge main@32cba47d into T10.4 PostgreSQL compaction metrics
+misc	t104-main-fix	12fd10ce9a08	2026-11-15	1	T10.4 conflict resolution: shared metrics assertions on the current fixtures
+misc	t104-ours-fix	120184ce3a6d	2026-11-15	1	T10.4: rule the generated .git/index last-writer-wins at merge
+misc	t104-rebased	126b60cd478d	2026-11-15	1	T10.4: reapply PostgreSQL compaction metrics parity onto current main
+misc	t124-integ	125c2a011c33	2026-11-15	1	docs(gc): restore .lww wording after the merge
+misc	t124-resolve	12b1b3c734f1	2026-11-15	1	lww: treat the git index as generated
+misc	t6-fix	12aa3ac97f62	2026-11-15	1	resolve bind.rs: keep T5.5 whiteout and T6 mount intent
+misc	t6-fix2	1276b4035980	2026-11-15	1	merged T6 with main: admission + T3/T4/T5 regressions pass; PG compile OK
+misc	t6-fix3	12cadda3ceb0	2026-11-15	1	merge main (T1.2c) into T6 admission
+misc	t6-fix4	1237c81ab3bc	2026-11-15	1	resolve operator/workspace.rs: take main's Snap serial
+misc	val-freshcopy	1244afae161c	2026-11-16	1	docs: clarify checkpoint busy timeout and writer tail
+misc	ws1	12900c81228a	2026-11-14	1	ws-test
+dsh.session	dsh.session.098c90b2acc7445786b1b0f0f9d51e2f	1266ebcf87ed	2026-11-21	1	dsh session 098c90b2: events 0..608 (1229824 bytes)
+dsh.session	dsh.session.29db9142498746e7a2213062deec465c	123ebeec8ced	2026-11-21	1	dsh session 29db9142: events 0..410 (1067597 bytes)
+dsh.session	dsh.session.2c1d0bf12e234e919f401cac0b4067b2	12d6c66a08ea	2026-11-21	1	dsh session 2c1d0bf1: events 0..728 (1425085 bytes)
+dsh.session	dsh.session.51180954b2c143efa574212e5b928da4	124574a45429	2026-11-21	1	dsh session 51180954: events 0..898 (1730146 bytes)
+dsh.session	dsh.session.534e9d279a6a4fa8a9016dfed74e5f60	12e26e61bfe1	2026-11-21	1	dsh session 534e9d27: events 0..1887 (4768871 bytes)
+dsh.session	dsh.session.58ab042399b345d0b0f8d8c3aa906ca3	12407c15e712	2026-11-21	1	dsh session 58ab0423: events 0..1436 (3105591 bytes)
+dsh.session	dsh.session.670549408beb4b9e8d6bd0a4dca1779a	12487e9551f0	2026-11-21	1	dsh session 67054940: events 0..801 (1936369 bytes)
+dsh.session	dsh.session.68980c4770584081bc624e84a6a062ef	120e0272e588	2026-11-22	1	dsh session 68980c47: events 476..546 (244475 bytes)
+dsh.session	dsh.session.8720824062d34343bcc7a4aefb6d6a51	1293a5b48217	2026-11-21	1	dsh session 87208240: events 0..1866 (4469705 bytes)
+dsh.session	dsh.session.921c1350da9e4eb6a48e2738d656ca97	1201be024469	2026-11-21	1	dsh session 921c1350: events 0..696 (1384721 bytes)
+dsh.session	dsh.session.b25d0c7adbe34af9a578acdaebb6ba2d	1251067bbd53	2026-11-21	1	dsh session b25d0c7a: events 17959..17975 (53664 bytes)
+dsh.session	dsh.session.bbd30981c4ca4b8abc457b431d1cc7ed	1274beda6759	2026-11-21	1	dsh session bbd30981: events 0..600 (1472863 bytes)
+dsh.session	dsh.session.bbed74eb12214b31b607d3143cf9e9e3	12874723569e	2026-11-21	1	dsh session bbed74eb: events 0..534 (941155 bytes)
+dsh.session	dsh.session.d5e19c670447407ba7d3f3043fb5f941	125d6e98f8bd	2026-11-21	1	dsh session d5e19c67: events 592..620 (79907 bytes)
+dsh.session	dsh.session.d6a06a554d7147199f9a20e9e837fa34	122f9ddc03d1	2026-11-21	1	dsh session d6a06a55: events 0..2018 (4906370 bytes)
+dsh.session	dsh.session.d6c3c632bb1a40a1bb15136a3143015c	12cd2b1ebe86	2026-11-21	1	dsh session d6c3c632: events 25..43 (39805 bytes)
+dsh.session	dsh.session.db27e4d1420c4baf8e84f9979c2d8bab	1271ba790a19	2026-11-21	1	dsh session db27e4d1: events 0..430 (1075551 bytes)
+dsh.session	dsh.session.e5adb9eeb2c84a2a9cdfba3be53435ce	12decc00058b	2026-11-21	1	dsh session e5adb9ee: events 874..1182 (3206008 bytes)
+dsh.session	dsh.session.ecf8e2eddaaa4d57ac899046e527f1f2	12ade276037a	2026-11-21	1	dsh session ecf8e2ed: events 0..908 (1743880 bytes)
+dsh.session	dsh.session.fae8a3238c2c45859423b933800dcc9d	1218ba16516e	2026-11-21	1	dsh session fae8a323: events 0..553 (1412883 bytes)
+dsh.session	dsh.session.fee0ff9c79c845eea879e5f25a50a5b4	121a02495412	2026-11-21	1	dsh session fee0ff9c: events 3108..3128 (62167 bytes)
+dsh.session	dsh.session.ff62fddbfd5548eda316d56a21884ea1	12ff5bd6e06b	2026-11-21	1	dsh session ff62fddb: events 0..1304 (3403998 bytes)

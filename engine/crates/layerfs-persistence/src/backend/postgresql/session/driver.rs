@@ -47,9 +47,6 @@ impl Error {
 pub(crate) enum Driver {
     Sync(Client),
     Diagnostic(Diagnostic),
-    /// An ordinary connection closed by quarantine (`State::quarantine`);
-    /// every call is refused as an unknown outcome without reaching a server.
-    Closed,
 }
 pub(crate) struct Diagnostic {
     client: tokio_postgres::Client,
@@ -68,10 +65,7 @@ impl Driver {
         resolver: &mut crate::diagnostic::Resolver<'_>,
         cancelled: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<Self, Error> {
-        // connect and login get the handshake limit even under a longer
-        // deadline: a server that says nothing is unreachable, not slow
-        let limit = Instant::now() + super::connection::HANDSHAKE;
-        let admission = deadline.map_or(limit, |deadline| deadline.min(limit));
+        let admission = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(10));
         Self::diagnostic_selection(selection, deadline, admission, resolver, cancelled)
     }
     pub(crate) fn diagnostic_admitted(
@@ -244,7 +238,6 @@ impl Driver {
         match self {
             Self::Sync(client) => client.prepare(sql).map_err(Into::into),
             Self::Diagnostic(client) => client.run(client.client.prepare(sql)),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn query(
@@ -255,7 +248,6 @@ impl Driver {
         match self {
             Self::Sync(client) => client.query(statement, params).map_err(Into::into),
             Self::Diagnostic(client) => client.run(client.client.query(statement, params)),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn query_one(
@@ -274,42 +266,36 @@ impl Driver {
         match self {
             Self::Sync(client) => client.simple_query(sql).map_err(Into::into),
             Self::Diagnostic(client) => client.run(client.client.simple_query(sql)),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn batch_execute(&mut self, sql: &str) -> Result<(), Error> {
         match self {
             Self::Sync(client) => client.batch_execute(sql).map_err(Into::into),
             Self::Diagnostic(client) => client.run(client.client.batch_execute(sql)),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn copy_in(&mut self, statement: &Statement) -> Result<CopyInWriter<'_>, Error> {
         match self {
             Self::Sync(client) => client.copy_in(statement).map_err(Into::into),
             Self::Diagnostic(_) => Err(Error::Refused(BackendError::ReadOnly)),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn is_valid(&mut self, timeout: Duration) -> Result<(), Error> {
         match self {
             Self::Sync(client) => client.is_valid(timeout).map_err(Into::into),
             Self::Diagnostic(client) => client.run(client.client.batch_execute("")),
-            Self::Closed => Err(Error::Refused(BackendError::Unknown)),
         }
     }
     pub(crate) fn cancellation(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         match self {
             Self::Sync(_) => None,
             Self::Diagnostic(client) => Some(client.cancelled.clone()),
-            Self::Closed => None,
         }
     }
     pub(crate) fn released(&self) -> Option<bool> {
         match self {
             Self::Sync(_) => None,
             Self::Diagnostic(client) => client.released.get(),
-            Self::Closed => None,
         }
     }
     pub(crate) fn close(self) -> Result<(), Error> {
@@ -319,7 +305,6 @@ impl Driver {
                 drop(client);
                 Ok(())
             }
-            Self::Closed => Ok(()),
         }
     }
 }

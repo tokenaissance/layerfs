@@ -1,20 +1,18 @@
-//! The `machine` family: 13 calls, one file each (call surface 2.0;
-//! `machine.status` is `machine get`, `machine.space` is `machine stats
-//! --with space`, `machine.platforms` is `home get --with platforms`,
-//! `logs.machine` is `machine log`). `stats` also holds the small helpers
-//! that rename what a library function answered to the row's keys.
+//! The `machine` family: 15 calls, one file each (O11: update; #535: platforms, start, stop;
+//! layerfs-project#164: stats; layerfs-project#178: files; space).
 mod create;
-mod doctor;
 mod files;
 mod get;
 mod images;
 mod list;
-mod load_image;
-mod log;
+mod load;
+mod platforms;
 mod prune;
 mod remove;
+mod space;
 mod start;
 mod stats;
+mod status;
 mod stop;
 mod update;
 
@@ -24,18 +22,19 @@ use crate::calls::Calls;
 pub(crate) fn calls() -> Calls {
     &[
         list::CALL,
+        platforms::CALL,
         get::CALL,
         images::CALL,
-        load_image::CALL,
+        load::CALL,
         prune::CALL,
+        status::CALL,
         stats::CALL,
+        space::CALL,
         files::CALL,
-        log::CALL,
         start::CALL,
         stop::CALL,
         create::CALL,
         remove::CALL,
         update::CALL,
-        doctor::CALL,
     ]
 }

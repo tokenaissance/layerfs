@@ -1,52 +1,19 @@
-//! `backup.list`: the Store files in the connected buckets, with the Store
-//! each is linked to.
+//! `backup.list`: every Store file on the connected buckets.
 use crate::calls::table::Kind::Name;
 use crate::calls::table::{call, opt, Call};
-use crate::calls::{Context, Form, Part};
+use crate::calls::Context;
 use layerfs_bridge::control::SdkValue;
 use layerfs_home::outcome::Outcome;
 
-/// One Store file: its bucket and name, and what is news about it.
-const ITEM: Form = Form::of(
-    &["bucket", "file"],
-    &["size", "store", "behind", "changed", "missing"],
-    &[
-        "bucket",
-        "file",
-        "size",
-        "store",
-        "behind",
-        "changed",
-        "missing",
-        "message",
-        "modified_at",
-        "sha256",
-        "heads_sha256",
-    ],
-);
-/// A bucket that could not be listed, with the call that connects it
-/// again when its key was missing or refused.
-const NOT_LISTED: Form = Form::of(
-    &["bucket"],
-    &["blocked_by", "reason", "message", "fix"],
-    &["bucket", "blocked_by", "reason", "message", "fix"],
-);
-const FORM: Form = Form::of(&["items"], &["not_listed"], &["items", "not_listed"]).parts(&[
-    ("items", Part::Rows(&ITEM)),
-    ("not_listed", Part::Rows(&NOT_LISTED)),
-]);
-
-/// Its table entry: unpaged, a row per Store file under each bucket's
-/// prefix.
+/// Its table entry.
 pub(crate) const CALL: Call = call(
     "backup",
     "list",
-    &[],
     &[opt("bucket", Name)],
-    "the Store files in the connected buckets, with the Store each is linked to",
+    &[],
+    "every Store file on the connected buckets",
     run,
-)
-.form(&FORM);
+);
 
 /// Runs `backup.list`.
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {

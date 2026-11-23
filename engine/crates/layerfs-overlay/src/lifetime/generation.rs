@@ -10,58 +10,11 @@ impl Overlay {
     /// Later active rows and pending replies remain untouched. Physical retire
     /// work is queued; last-owner eligibility/automatic deletion is S6 work.
     pub fn install(&self, capture: Capture, root: [u8; 32]) -> OverlayResult<()> {
-        self.install_merged(capture, root, &[])
-    }
-    /// [`Self::install`] of a root other than the one constructed from the
-    /// capture (a merge). `changed` lists, sorted, the serials whose value
-    /// differs between the two roots. A row [`Self::keep_live_row`] carried
-    /// for one of them would let its bytes fall through to the new base's
-    /// different ones, so it is deleted with the install: its only change, a
-    /// live mtime, is never committed. Every other active row of a changed
-    /// serial, or under a changed directory, was computed against the old
-    /// base: the caller refuses the install while one exists and holds
-    /// later mutations until it is done (`layerfs-store-service`
-    /// `store/live.rs`). Rows of unchanged serials stay valid over the new
-    /// base, which holds the same value for them.
-    pub fn install_merged(
-        &self,
-        capture: Capture,
-        root: [u8; 32],
-        changed: &[u64],
-    ) -> OverlayResult<()> {
         self.atomic_cleanup(|| {
             if !self.install_ready(capture)? {
                 return Err(OverlayError::BaseSourcesPending);
             }
-            let active = self.state()?.active;
-            let stale: Vec<i64> = self
-                .open
-                .borrow()
-                .kept_live
-                .rows
-                .keys()
-                .copied()
-                .filter(|serial| {
-                    u64::try_from(*serial)
-                        .is_ok_and(|serial| changed.binary_search(&serial).is_ok())
-                })
-                .collect();
-            for serial in &stale {
-                self.execute(
-                    StatementKind::Inode,
-                    "DELETE FROM fs_inode WHERE inode=?1 AND generation=?2",
-                    &[serial, &active.0],
-                    24,
-                )?;
-                self.open.borrow_mut().kept_live.remove(*serial);
-            }
             self.change_state(|state| {
-                if !stale.is_empty() {
-                    state.revision = state
-                        .revision
-                        .checked_add(1)
-                        .ok_or(OverlayError::Invalid("revision exhausted"))?;
-                }
                 state.base_root = root;
                 state.installed = capture.generation.0;
                 state.captured = None;
@@ -176,34 +129,16 @@ impl Overlay {
     }
     /// Changed inodes of the active generation after `after`, from the same
     /// indexed window a capture reads. A diagnostic observation: membership
-    /// may change between windows. A row carried for an mtime-only capture
-    /// ([`Self::keep_live_row`]) and not written since is no change and is
-    /// left out; a window of only such rows reads on, so an empty answer
-    /// still means the end.
+    /// may change between windows.
     pub fn active_inodes(&self, after: u64) -> OverlayResult<Vec<Inode>> {
         let state = self.live()?;
-        let mut after = after;
-        loop {
-            let window = self.query(
-                StatementKind::Capture,
-                sql::INODE_CAPTURE,
-                &[&state.active.0, &integer(after)?],
-                24,
-                inode::decode,
-            )?;
-            let Some(last) = window.last() else {
-                return Ok(window);
-            };
-            after = last.serial;
-            let open = self.open.borrow();
-            let kept = |row: &Inode| {
-                i64::try_from(row.serial).is_ok_and(|key| open.kept_live.rows.contains_key(&key))
-            };
-            let changed: Vec<Inode> = window.into_iter().filter(|row| !kept(row)).collect();
-            if !changed.is_empty() {
-                return Ok(changed);
-            }
-        }
+        self.query(
+            StatementKind::Capture,
+            sql::INODE_CAPTURE,
+            &[&state.active.0, &integer(after)?],
+            24,
+            inode::decode,
+        )
     }
     /// Changed name bindings of the active generation after `(parent, name)`,
     /// as [`Self::active_inodes`] observes inodes.

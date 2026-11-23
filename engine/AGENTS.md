@@ -228,12 +228,11 @@ is the working procedure. A docs-only change needs no campaign.
   uncertain custody: no resend, rollback, deletion or success claim from an
   unfenced read. An unsupported required platform or capability fails
   explicitly, never as a silent no-op or fallback.
-- **Every SQLite Store opens Normal/WAL/NORMAL**, on macOS and Linux, tests
-  and diagnostics included
+- **Product paths open SQLite Stores Normal/WAL/NORMAL**, on macOS and Linux
   ([profile](../AGENTS.md#active-persistence-profile--owner-direction-2026-11-17));
-  the Disposable/WAL/OFF profile was removed (owner, 2026-11-23). Select the
-  profile explicitly, never by default argument. Claim process-crash survival
-  only until Normal's safety gate is run. Open verifies WAL and never converts an existing
+  tests may still select Disposable/WAL/OFF. Select a profile explicitly,
+  never by default argument. Both claim process-crash survival only until
+  Normal's safety gate is run. Open verifies WAL and never converts an existing
   Store; select profile and layout before open. WAL stays on throughout Init
   and Commit (owner supersession 2026-10-07): no private MEMORY import or
   journal promotion. Checkpointing is described on the

@@ -1,5 +1,5 @@
-//! The global Store: embedded SQLite (the Normal profile; Durable is
-//! disabled by the owner) or PostgreSQL (#506).
+//! The global Store: embedded SQLite (explicit Durable and disk-backed
+//! Disposable profiles) or PostgreSQL (#506).
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 mod backend;
@@ -14,7 +14,6 @@ pub(crate) use store::config;
 mod history;
 mod report;
 pub use backend::postgresql::access::{access as postgresql_access, PostgresAccess};
-pub use backend::postgresql::session::connection::HANDSHAKE as POSTGRESQL_HANDSHAKE;
 pub use backend::postgresql::status::{
     compact_status as postgresql_compact_status, status as postgresql_status,
     PostgresCompactOpStatus, PostgresStatus, PostgresStatusError,
@@ -45,6 +44,7 @@ pub use history::{
     HistoryProvider, KeptHistory, KeptNode, KeptNodeId, KeptObjects, KeptWaste, MarkResult,
     Sequence, Spans,
 };
+pub use history::admission::{has_place_view, with_place_view};
 pub use report::{CompactStatus, POSTGRES_COMPACT_PHASES, SQLITE_COMPACT_PHASES};
 pub(crate) use storage::provider as storage_provider;
 pub(crate) use storage::publication;

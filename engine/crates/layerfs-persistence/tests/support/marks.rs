@@ -143,7 +143,6 @@ pub fn retain(handles: &SqliteHandles, roots: &[ObjectId]) {
                 second_parent: None,
                 meta: CommitMeta::new(CommitVia::Files),
                 force: false,
-                required_head: None,
             })
             .unwrap()
         {
@@ -205,7 +204,7 @@ pub struct UnderBudget {
 
 fn open(path: &std::path::Path) -> SqliteHandles {
     SqliteHandles::open_writable(
-        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal),
+        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         b"doctor-adversarial",
         [71; 32],
     )

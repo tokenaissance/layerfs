@@ -1,6 +1,7 @@
-//! Kernel mounts under a folder, from `/proc/self/mountinfo`: what a
-//! removal asks before it deletes a Sandbox's folder, and the filesystem a
-//! namespaces overlay sits on.
+//! Kernel mounts left under a native Sandbox's directory once its daemon is
+//! gone. A container's mounts end with its namespace; this daemon's stay in
+//! the one kernel until detached. The table is `/proc/self/mountinfo` and a
+//! mount is detached lazily with `umount2(MNT_DETACH)`.
 use std::{
     io,
     path::{Path, PathBuf},
@@ -108,4 +109,22 @@ fn unescape(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Detaches every mount under `directory` once (lazy unmount: a process
+/// still inside keeps its view; new lookups no longer reach it), then checks
+/// that none is left.
+pub(crate) fn detach(directory: &Path) -> io::Result<()> {
+    use nix::mount::{umount2, MntFlags};
+    for point in under(directory)? {
+        match umount2(&point, MntFlags::MNT_DETACH) {
+            Ok(()) | Err(nix::errno::Errno::EINVAL) | Err(nix::errno::Errno::ENOENT) => {}
+            Err(errno) => return Err(errno.into()),
+        }
+    }
+    if under(directory)?.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other("a mount under the local Sandbox remains"))
+    }
 }

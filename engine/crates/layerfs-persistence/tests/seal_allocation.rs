@@ -77,7 +77,7 @@ fn authority() -> HistoryCatalogConfig {
     }
 }
 fn config(path: &Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 fn open(path: &Path) -> SqliteHandles {
     SqliteHandles::open_writable(

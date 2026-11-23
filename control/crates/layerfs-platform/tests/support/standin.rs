@@ -71,13 +71,6 @@ impl Scratch {
         for name in ["layerfs", "layerfs-daemon", "layerfs-sandbox-helper"] {
             fs::write(dir.join(name), b"").unwrap();
         }
-        // a bundle names its files' identities (`tools/linux_bundle.py`)
-        let id = "0".repeat(64);
-        let files = format!(
-            r#"{{"layerfs":"{id}","layerfs-daemon":"{id}","layerfs-sandbox-helper":"{id}"}}"#
-        );
-        let manifest = format!(r#"{{"hash":"0123abcd","files":{files}}}"#);
-        fs::write(dir.join("bundle.json"), manifest).unwrap();
         Bundle {
             dir,
             hash: "0123abcd".into(),
@@ -100,6 +93,7 @@ impl Scratch {
                 gateway: None,
             },
             worker: None,
+            incarnation: None,
             work_dir: self.dir.join("work"),
             tools: self.tools(),
         }

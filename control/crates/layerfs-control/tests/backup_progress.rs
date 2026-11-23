@@ -1,8 +1,7 @@
 //! The progress `backup.create` and `backup.restore` send (layerfs-project
-//! #5, call surface 2.0): the bucket library's byte counts as the public
-//! `{ phase, done, total }` (no piece counts), sent while the transfer
-//! runs, each phase ending on its exact count, and a failed transfer ending
-//! on what it moved.
+//! #5): the bucket library's byte and piece counts as `{ phase, done,
+//! total, pieces }`, sent while the transfer runs, each phase ending on its
+//! exact count, and a failed transfer ending on what it moved.
 use layerfs_bridge::control::SdkValue;
 use layerfs_bucket::bucket::progress as bucket;
 use layerfs_home::events::Events;
@@ -11,20 +10,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// `(phase, done, total)` of one update.
-type Seen = (String, Option<i64>, Option<i64>);
+/// `(phase, done, total, pieces)` of one update.
+type Seen = (String, Option<i64>, Option<i64>, Option<(i64, i64)>);
 
 fn seen(event: &SdkValue) -> Seen {
     let progress = event.get("progress").expect("a progress event");
-    let SdkValue::Map(fields) = progress else {
-        panic!("not a map: {progress:?}")
+    let pieces = match progress.get("pieces") {
+        Some(SdkValue::Null) => None,
+        Some(p) => Some((p.get_int("done").unwrap(), p.get_int("of").unwrap())),
+        None => panic!("no pieces field"),
     };
-    let keys: Vec<&str> = fields.iter().map(|(key, _)| key.as_str()).collect();
-    assert_eq!(keys, ["phase", "done", "total"], "{progress:?}");
     (
         progress.get_text("phase").unwrap().to_owned(),
         progress.get_int("done"),
         progress.get_int("total"),
+        pieces,
     )
 }
 
@@ -47,7 +47,7 @@ fn counts_up(events: &[Seen]) {
 }
 
 #[test]
-fn phases_end_on_their_exact_counts_and_pieces_are_not_reported() {
+fn phases_end_on_their_exact_counts_and_pieces_are_each_sent() {
     let (_, events) = transfer(|| {
         bucket::begin("hash", Some(10));
         bucket::add(4);
@@ -63,9 +63,21 @@ fn phases_end_on_their_exact_counts_and_pieces_are_not_reported() {
     let t = |s: &str| s.to_owned();
     // the hash phase's last update is its total, before upload starts
     let last_hash = events.iter().rposition(|e| e.0 == "hash").unwrap();
-    assert_eq!(events[last_hash], (t("hash"), Some(10), Some(10)));
+    assert_eq!(events[last_hash], (t("hash"), Some(10), Some(10), None));
     assert!(events[last_hash + 1..].iter().all(|e| e.0 == "upload"));
-    assert_eq!(events.last(), Some(&(t("upload"), Some(10), Some(10))));
+    for piece in [(0, 2, 0), (1, 2, 5), (2, 2, 10)] {
+        let want = (
+            t("upload"),
+            Some(piece.2),
+            Some(10),
+            Some((piece.0, piece.1)),
+        );
+        assert!(events.contains(&want), "{want:?} not in {events:?}");
+    }
+    assert_eq!(
+        events.last(),
+        Some(&(t("upload"), Some(10), Some(10), Some((2, 2))))
+    );
     // nothing is sent twice in a row
     assert!(events.windows(2).all(|p| p[0] != p[1]), "{events:?}");
 }
@@ -106,7 +118,7 @@ fn a_failed_transfer_ends_on_what_it_moved() {
     assert_eq!(result, Err("connection reset"));
     assert_eq!(
         events.last(),
-        Some(&("upload".to_owned(), Some(40), Some(100)))
+        Some(&("upload".to_owned(), Some(40), Some(100), None))
     );
     assert!(events.iter().all(|e| e.1 != Some(100)), "{events:?}");
 }
@@ -127,7 +139,7 @@ fn a_panic_in_the_transfer_is_resumed_after_its_updates() {
     assert!(outcome.is_err());
     assert_eq!(
         events.last(),
-        Some(&("download".to_owned(), Some(2), Some(8)))
+        Some(&("download".to_owned(), Some(2), Some(8), None))
     );
 }
 
@@ -145,9 +157,9 @@ fn the_calls_own_phases_carry_no_bytes_and_are_not_repeated() {
     assert_eq!(
         events,
         vec![
-            (t("check"), None, None),
-            (t("install"), None, None),
-            (t("send"), Some(8), None),
+            (t("check"), None, None, None),
+            (t("install"), None, None, None),
+            (t("send"), Some(8), None, None),
         ]
     );
 }

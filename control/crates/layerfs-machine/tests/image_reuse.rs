@@ -105,16 +105,12 @@ esac
         format!(r#"{{"hash":"{}"}}"#, "d".repeat(64)),
     )
     .unwrap();
-    // a bundle that names no image identity (an earlier build's) is
-    // refused, and nothing is imported (CUT, owner 2026-11-19)
-    let refused = docker_default(&three).unwrap_err();
-    assert_eq!(refused.code, "InvalidInput", "{}", refused.message);
-    assert!(
-        refused.message.contains("linux_bundle.py"),
-        "{}",
-        refused.message
+    docker_default(&three).unwrap();
+    assert_eq!(
+        count(),
+        4,
+        "legacy metadata can reuse a present matching recorded ID"
     );
-    assert_eq!(count(), 4, "a refused bundle imported");
     std::env::set_var("PATH", old_path);
     std::env::remove_var("LAYERFS_BUNDLE");
     match old_cache {

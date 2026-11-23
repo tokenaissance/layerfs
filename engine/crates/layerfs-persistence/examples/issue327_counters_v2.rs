@@ -19,7 +19,7 @@ fn authority() -> HistoryCatalogConfig {
     }
 }
 fn config(path: &Path) -> PersistenceConfig {
-    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal)
+    PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable)
 }
 fn fixture() -> Vec<Vec<u8>> {
     let mut seed = 327u64;
@@ -153,7 +153,6 @@ fn main() {
                 second_parent: None,
                 meta,
                 force: false,
-                required_head: None,
             })
             .unwrap();
         if let CommitOutcome::Committed { record, .. } = result {

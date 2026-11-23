@@ -10,7 +10,7 @@
 use layerfs_bucket::bucket::minio::{self, MinioSettings};
 use layerfs_bucket::bucket::pieces;
 use layerfs_bucket::bucket::s3_api::{part_size, S3Client, S3Config, MAX_PARTS, MIN_PART};
-use layerfs_bucket::bucket::{Driver, Limits, Metadata, RemoteError, Span};
+use layerfs_bucket::bucket::{CredentialRef, Driver, Limits, Metadata, RemoteError, Span};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -249,6 +249,12 @@ fn part_sizes_and_config_refusals() {
     // nothing listens on port 9: refused before any byte is sent
     let client = S3Client::new(config("http://127.0.0.1:9")).unwrap();
     assert!(matches!(client.stat("x"), Err(RemoteError::Unavailable(_))));
+    assert!(CredentialRef::parse("env:OTHER_PREFIX").is_err());
+    assert!(CredentialRef::parse("file:relative").is_err());
+    assert_eq!(
+        CredentialRef::parse("env:LAYERFS_REMOTE").unwrap().text(),
+        "env:LAYERFS_REMOTE"
+    );
 }
 
 #[test]
@@ -463,12 +469,7 @@ fn file_over_max_goes_up_as_pieces() {
         (13 * MIB, 3, sent.sha256)
     );
     assert_eq!(fs::read(root.join("down")).unwrap(), data);
-    remote.delete("store.sqlite").unwrap();
-    for index in 0..3 {
-        remote
-            .delete(&pieces::piece_name("store.sqlite", index))
-            .unwrap();
-    }
+    pieces::delete(&remote, "store.sqlite").unwrap();
     assert_eq!(
         remote.stat(&pieces::piece_name("store.sqlite", 0)).unwrap(),
         None
@@ -520,10 +521,11 @@ fn minio_from_env() -> Option<MinioSettings> {
         bucket: read("BUCKET")?,
         prefix: read("PREFIX").unwrap_or_default(),
         region: read("REGION").unwrap_or_else(|| "us-east-1".to_owned()),
-        credentials: layerfs_bucket::bucket::Credentials {
-            access_key: read("ACCESS_KEY")?,
-            secret_key: read("SECRET_KEY")?,
-        },
+        credentials: layerfs_bucket::bucket::credentials::CredentialRef::parse(
+            &read("layerfs_store_backup::bucket::credentials::CredentialRef")
+                .unwrap_or_else(|| "env:LAYERFS_REMOTE".to_owned()),
+        )
+        .ok()?,
         part_size: read("PART_SIZE")
             .and_then(|t| t.parse().ok())
             .unwrap_or(layerfs_bucket::bucket::minio::DEFAULT_PART_SIZE),

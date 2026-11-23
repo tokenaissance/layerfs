@@ -55,7 +55,8 @@ fn make_old(path: &std::path::Path) {
          DROP TABLE absorbed; DROP TABLE reach; DROP TABLE merge_operation; \
          DROP TABLE merge_record; DROP TABLE file_digest; \
          DROP TABLE branch_retired; DROP TABLE layer_stack_retired; DROP TABLE path_removed; \
-         DROP TABLE project_epoch; DROP TABLE gc_intent; DROP TABLE gc_op; DROP TABLE gc_dead; DROP TABLE kept_node;",
+         DROP TABLE project_epoch; \
+         DROP TABLE gc_intent; DROP TABLE gc_op; DROP TABLE gc_dead; DROP TABLE kept_node;",
     )
     .unwrap();
     let source: String = sql
@@ -86,7 +87,7 @@ fn writable(
     path: &std::path::Path,
 ) -> Result<SqliteHandles, layerfs_storage::port::PersistenceError> {
     SqliteHandles::open_writable(
-        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Normal),
+        PersistenceConfig::sqlite(path).with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         BINDING,
         [71; 32],
     )

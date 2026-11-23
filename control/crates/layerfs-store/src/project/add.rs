@@ -1,6 +1,6 @@
 //! A project added to a live SQLite Store (`project.init` into a shared
 //! Store): its entry in the home and the add through the Store's writer lane.
-use crate::identity::{identity, sqlite_only, store_dir, Identity};
+use crate::identity::{identity, legacy, sqlite_only, store_dir, Identity};
 use crate::open_args::OpenArgs;
 use crate::project::discovery;
 use crate::project::discovery::Project;
@@ -37,7 +37,7 @@ pub fn manifest(
     let manifest = StoreManifest {
         provider: ProviderKind::Sqlite,
         locator: crate::project::init::LOCATOR.into(),
-        profile: StoreProfile::Normal,
+        profile: StoreProfile::Disposable,
         binding: identity.binding.clone(),
         cursor_key: identity.cursor_key,
         stack: stack.to_bytes(),
@@ -72,20 +72,17 @@ pub fn save_entry(
 
 /// Makes the entry of project `name` of the shared Store `store` once,
 /// owner-only, with its parents: `<home>/store/<store>/project/<name>/`.
-/// An entry an Init of this process claimed ([`crate::project::op`]) is
-/// that Init's to fill; any other entry already there is `NameTaken`.
 pub fn make_entry(home: &Path, store: &str, name: &str) -> Result<PathBuf> {
     let directory = store_dir(home, store)?;
     layerfs_home::home::private_dir(&directory.join("project"))?;
     let entry = layerfs_home::home::paths::project_dir(home, store, name);
-    if let Err(error) = std::fs::create_dir(&entry) {
-        if error.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(failed(error));
+    std::fs::create_dir(&entry).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            home_name_taken(store, name)
+        } else {
+            failed(error)
         }
-        if !crate::project::op::claimed(home, store, name)? {
-            return Err(home_name_taken(store, name));
-        }
-    }
+    })?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o700)).map_err(failed)?;
     Ok(entry)
@@ -127,7 +124,13 @@ pub struct ProjectAdd {
 impl ProjectAdd {
     /// What opens the Store: its home, name, file and record.
     pub fn open(&self) -> OpenArgs {
-        OpenArgs::in_root(&self.home, &self.store, self.store_record.clone())
+        OpenArgs {
+            home: Some(self.home.clone()),
+            store: Some(self.store.to_string()),
+            store_path: Some(self.store_file().display().to_string()),
+            store_record: self.store_record.clone(),
+            ..OpenArgs::default()
+        }
     }
 
     /// The Store's file.
@@ -156,6 +159,9 @@ pub fn add_project(request: &ProjectAdd) -> Outcome {
         ));
     }
     let home = discovery::home_of(Some(&request.home))?;
+    if name == store && legacy(&home, store)? {
+        return Err(home_name_taken(store, name));
+    }
     let entry = make_entry(&home, store, name)?;
     let _guard = discovery::guard(&entry)?;
     let history = |text: &str| HistoryName::new(text).map_err(failed);
@@ -184,17 +190,17 @@ pub fn add_project(request: &ProjectAdd) -> Outcome {
         Err(failure) => return Err(add_failure(failure.error, Some(&entry), name, store)),
     };
     let root = added.initialized.root.to_bytes();
-    let (manifest, installed) = manifest(
-        &identity,
-        &store_file,
-        stack,
-        branch,
-        root,
-        &added.sqlite_version,
+    save_entry(
+        &entry,
+        manifest(
+            &identity,
+            &store_file,
+            stack,
+            branch,
+            root,
+            &added.sqlite_version,
+        )?,
     )?;
-    let manifest_bytes = manifest.encode().map_err(failed)?;
-    let installed_bytes = installed.encode().map_err(failed)?;
-    save_entry(&entry, (manifest, installed))?;
     Ok(SdkValue::map([
         ("kind", SdkValue::text("Initialized")),
         ("project", SdkValue::text(name)),
@@ -212,8 +218,6 @@ pub fn add_project(request: &ProjectAdd) -> Outcome {
             "storePath",
             SdkValue::text(store_file.display().to_string()),
         ),
-        ("manifest", SdkValue::Bytes(manifest_bytes)),
-        ("installed", SdkValue::Bytes(installed_bytes)),
     ]))
 }
 
@@ -276,21 +280,12 @@ pub fn add_failure(error: InitError, entry: Option<&Path>, name: &str, store: &s
                     None,
                 );
             }
-            _ => return failed(added(name, store, &error)),
+            _ => return failed(format!("adding project {name} to Store {store}: {error:?}")),
         },
-        _ => return failed(added(name, store, &error)),
+        _ => return failed(format!("adding project {name} to Store {store}: {error:?}")),
     };
     if let Some(entry) = entry {
         let _ = std::fs::remove_dir_all(entry);
-        layerfs_home::home::generation::moved_above(entry);
     }
     refusal
-}
-
-/// Why adding project `name` to Store `store` failed, in plain words.
-fn added(name: &str, store: &str, error: &InitError) -> String {
-    format!(
-        "project {name} could not be added to Store {store}: {}",
-        crate::words::init_error(error)
-    )
 }

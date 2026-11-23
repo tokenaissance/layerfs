@@ -498,7 +498,6 @@ fn commit(rig: &Rig, token: WorkspaceToken, what: &str) -> CommitRecord {
                 token,
                 force: false,
                 message: None,
-                expected: None,
             },
         )) {
             Ok(done) => {

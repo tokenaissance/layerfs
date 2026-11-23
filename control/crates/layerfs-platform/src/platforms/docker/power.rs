@@ -7,7 +7,7 @@
 //! under the filter that refuses a user namespace instead.
 use super::cli::docker;
 use super::network::published_port;
-use super::unix::{guest, inspect, not_ours, run, WORKER_ROLE};
+use super::unix::{guest, inspect, run};
 use crate::error::{Code, MachineError};
 use crate::setup::{tool, worker};
 use crate::spec::{Bundle, Running, Spec, DATA, STATE, WORKER_LOG, WORKER_PORT};
@@ -82,8 +82,14 @@ pub(crate) fn start(spec: &Spec, bundle: &Bundle) -> Result<Running, MachineErro
         )
     })?;
     if let Some((_, role)) = inspect(spec)? {
-        if role != WORKER_ROLE {
-            return Err(not_ours(spec));
+        if format!("layerfs.role={role}") != ROLE {
+            return Err(MachineError::new(
+                Code::Exists,
+                format!(
+                    "the container {} is not a LayerFS worker; it is left alone",
+                    spec.vm_name
+                ),
+            ));
         }
         run(
             spec,
@@ -97,6 +103,12 @@ pub(crate) fn start(spec: &Spec, bundle: &Bundle) -> Result<Running, MachineErro
     let bundle_label = format!("layerfs.bundle={}", bundle.hash);
     let secret_file = format!("LAYERFS_WORKER_SECRET={STATE}/secret");
     let log = format!("LAYERFS_WORKER_LOG={WORKER_LOG}");
+    // empty when the caller starts a worker that mints its own: the CLI
+    // treats an empty setting as absent
+    let incarnation = format!(
+        "LAYERFS_WORKER_INCARNATION={}",
+        spec.incarnation.as_deref().unwrap_or("")
+    );
     let entry = entry();
     let tmpfs = format!("{STATE}:mode=0700");
     // On a Linux Engine the worker shares the host's network and listens on
@@ -132,7 +144,7 @@ pub(crate) fn start(spec: &Spec, bundle: &Bundle) -> Result<Running, MachineErro
     #[rustfmt::skip]
     args.extend([
         "-v", &volume, "-v", &bundle_mount, "--tmpfs", &tmpfs,
-        "-e", &listen, "-e", &secret_file, "-e", &log,
+        "-e", &listen, "-e", &secret_file, "-e", &log, "-e", &incarnation,
         "--entrypoint", "sh", image, "-c", &entry,
     ]);
     run(spec, &args, "starting the worker container")?.answer("starting the worker container")?;
@@ -170,8 +182,11 @@ pub(crate) fn stop(spec: &Spec, force: bool) -> Result<(), MachineError> {
     let Some((state, role)) = inspect(spec)? else {
         return Ok(());
     };
-    if role != WORKER_ROLE {
-        return Err(not_ours(spec));
+    if role != "machine-worker" {
+        return Err(MachineError::new(
+            Code::InvalidInput,
+            "the recorded container is not a LayerFS worker; it is left alone",
+        ));
     }
     if !matches!(state.as_str(), "running" | "restarting" | "paused") {
         return Ok(());

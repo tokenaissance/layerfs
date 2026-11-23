@@ -1,70 +1,211 @@
 //! The Store calls whose checks read who uses a Store (layerfs-project#105):
 //! each runs `layerfs-store`'s call with the checks from
 //! [`crate::inventory`]. The Store calls proper (`branch`, `commit`, `file`)
-//! and the rest (`store.list`, `store.get`, `store.create`) are
-//! `layerfs-store`'s own. `store.connect --machine` and
-//! `store.disconnect --machine` also read the machine, and the first
-//! reaches it as a Sandbox call would.
+//! and the rest are `layerfs-store`'s own. `store.update --machine` and
+//! `store.status --machine` also read the machine and reach it as a Sandbox
+//! call would.
 use crate::inventory;
 use layerfs_bridge::control::{SdkRefusal, SdkValue};
+use layerfs_bridge::sdk_values::hex;
 use layerfs_home::events::Events;
 use layerfs_home::names::{MachineName, StoreName};
-use layerfs_home::outcome::shell_word;
-use layerfs_home::outcome::{refused, with_fix, Outcome, FIX};
+use layerfs_home::outcome::{refused, Outcome};
 use layerfs_machine::worker::Unreached;
+use layerfs_store::open_args::OpenArgs;
 use layerfs_store::place::{self, Executor};
-use layerfs_store::postgresql::check;
-use layerfs_store::postgresql::connect::{self, StoreConnect};
+use layerfs_store::postgresql::{check, connect, update as store_update};
 use layerfs_store::record::{OwnConnection, StoreKind, StoreRecord};
+use layerfs_store::sqlite::family::StorePush;
 use layerfs_store::Related;
 use std::path::Path;
 
 pub use layerfs_store::close_idle;
 
 /// `store.compact`: reclaim one Store's dead bytes, answering the
-/// flattened report (`layerfs_store::report::compact_report`). A refusal
-/// gets the call that clears it as its `fix` (spec v19): starting a sqlite
-/// Store's machine whose worker was not reached, or replacing a worker of
-/// another build (the stop forced when Sandboxes are on the machine); the
-/// same `store compact` after a lost reply or an unresolved earlier run.
+/// §11 report.
 pub fn compact(home: &Path, events: &mut Events<'_>, name: &StoreName) -> Outcome {
+    layerfs_store::compact::compact(home, events, name.as_str())
+}
+
+/// `store.repair_mount_holders`: first-class explicit operator repair of
+/// one Branch's mount intents. Preview lists them and writes its own retained
+/// done row; settle/release act on one explicit op; release retains the row as
+/// the durable done audit; `archive` exports the done rows and prunes only
+/// what it exported, and only on request. Nothing is automatic. A SQLite
+/// Store on another machine is repaired by that machine's worker
+/// (`store.repair`), so the live Docker Store is reachable; a PostgreSQL
+/// Store runs here, as its calls do.
+#[allow(clippy::too_many_arguments)]
+pub fn repair(
+    home: &Path,
+    name: &StoreName,
+    project: &str,
+    branch: &str,
+    action: &str,
+    op: Option<[u8; 16]>,
+    legacy: bool,
+    operator: &str,
+    page: u32,
+    limit: u32,
+    prune: bool,
+) -> Outcome {
+    // The host holds the Store's lease while it repairs or sends the call,
+    // as `store_call` does: a Store an operation is moving is left.
+    let (_lease, record) = layerfs_store::lease::claim(home, name.as_str())?;
+    let store_ref = record.store_ref()?;
+    let executor = place::plan(home, store_ref)?;
+    if action == "archive" {
+        return archive(
+            home, name, &record, executor, project, branch, prune, page, limit,
+        );
+    }
+    match executor {
+        Executor::Local => {
+            let open = OpenArgs::of_record(home, name.as_str(), &record)?;
+            layerfs_store::service::repair_mount_holders_at(
+                &open, project, branch, action, op, legacy, operator, page, limit,
+            )
+        }
+        Executor::Worker(mut worker) => {
+            let mut fields = vec![
+                ("store".to_owned(), SdkValue::text(name.as_str())),
+                ("store_record".to_owned(), record.to_record().clone()),
+                ("project".to_owned(), SdkValue::text(project)),
+                ("branch".to_owned(), SdkValue::text(branch)),
+                ("action".to_owned(), SdkValue::text(action)),
+                (
+                    "op".to_owned(),
+                    op.map_or(SdkValue::Null, |op| SdkValue::text(hex(&op))),
+                ),
+                ("legacy".to_owned(), SdkValue::Bool(legacy)),
+                ("operator".to_owned(), SdkValue::text(operator)),
+                ("page".to_owned(), SdkValue::Int(i64::from(page))),
+                ("limit".to_owned(), SdkValue::Int(i64::from(limit))),
+            ];
+            if let Some(place) = layerfs_store::place_view::encoded_from_store(home, &record) {
+                fields.push(("place_view".to_owned(), place));
+            }
+            let request = SdkValue::Map(fields);
+            worker.call("store.repair", request, &mut |_: SdkValue| {})
+        }
+    }
+}
+
+/// The `archive` action: export the bounded retained `done` rows to
+/// `<home>/log/gc-audit.jsonl`, one audit item per line, and, only with
+/// `prune`, delete exactly the rows whose line was written. Export is the
+/// default; nothing is deleted automatically. A page read is bounded and the
+/// prune keeps the same page so the next read sees what moved down. On a
+/// worker-hosted Store the host writes its own home file and the worker
+/// performs the bounded read and the exact prune.
+#[allow(clippy::too_many_arguments)]
+fn archive(
+    home: &Path,
+    name: &StoreName,
+    record: &StoreRecord,
+    mut executor: Executor,
+    project: &str,
+    branch: &str,
+    prune: bool,
+    page: u32,
+    limit: u32,
+) -> Outcome {
     let store = name.as_str();
-    layerfs_store::compact::compact(home, events, store).map_err(|refusal| {
-        if refusal
-            .detail
-            .get(FIX)
-            .is_some_and(|fix| *fix != SdkValue::Null)
-        {
-            return refusal;
-        }
-        let machine = || {
-            let record = StoreRecord::read(home, store).ok().flatten()?;
-            let machine = record.machine().ok()?;
-            (record.kind().ok()? == StoreKind::Sqlite && machine != "native").then_some(machine)
-        };
-        let fix = match refusal.code.as_str() {
-            "Unavailable" => match machine() {
-                Some(machine) if layerfs_machine::worker::is_mismatch(&refusal) => {
-                    let on = inventory::sandboxes_on(home, &machine).map_or(0, |on| on.len());
-                    Some(layerfs_machine::state::replace_worker(&machine, on))
+    let mut next_page = page;
+    let mut exported = 0u64;
+    let mut pruned = 0u64;
+    let mut local: Option<OpenArgs> = None;
+    loop {
+        let answer = match &mut executor {
+            Executor::Local => {
+                if local.is_none() {
+                    local = Some(OpenArgs::of_record(home, store, record)?);
                 }
-                Some(machine) => Some(format!(
-                    "layerfs machine start {machine}",
-                    machine = shell_word(&machine)
-                )),
-                None => None,
-            },
-            "Unknown" | "Unresolved" => Some(format!(
-                "layerfs store compact {store}",
-                store = shell_word(store)
-            )),
-            _ => None,
+                let open = local.as_ref().expect("set above");
+                layerfs_store::service::done_audit(open, next_page, limit)?
+            }
+            Executor::Worker(worker) => {
+                let mut fields = vec![
+                    ("store".to_owned(), SdkValue::text(store)),
+                    ("store_record".to_owned(), record.to_record().clone()),
+                    ("project".to_owned(), SdkValue::text(project)),
+                    ("branch".to_owned(), SdkValue::text(branch)),
+                    ("action".to_owned(), SdkValue::text("audit")),
+                    ("page".to_owned(), SdkValue::Int(i64::from(next_page))),
+                    ("limit".to_owned(), SdkValue::Int(i64::from(limit))),
+                ];
+                if let Some(place) = layerfs_store::place_view::encoded_from_store(home, record) {
+                    fields.push(("place_view".to_owned(), place));
+                }
+                worker.call("store.repair", SdkValue::Map(fields), &mut |_| {})?
+            }
         };
-        match fix {
-            Some(fix) => with_fix(refusal, fix),
-            None => refusal,
+        let items = match answer.get("items") {
+            Some(SdkValue::List(items)) => items,
+            _ => {
+                return Err(refused(
+                    "Failed",
+                    "the retained audit page carries no items",
+                ))
+            }
+        };
+        for item in items {
+            layerfs_home::home::log_line(home, "gc-audit.jsonl", item)?;
+            exported += 1;
         }
-    })
+        if items.is_empty() {
+            break;
+        }
+        let has_more = matches!(answer.get("has_more"), Some(SdkValue::Bool(true)));
+        if prune {
+            let mut ops = Vec::with_capacity(items.len());
+            for item in items {
+                let text = item
+                    .get_text("op")
+                    .ok_or_else(|| refused("Failed", "an exported audit row names no operation"))?;
+                let op: [u8; 16] = layerfs_bridge::sdk_values::unhex(text)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or_else(|| refused("Failed", "an exported audit op is not 16 bytes"))?;
+                ops.push(op);
+            }
+            let before = pruned;
+            match &mut executor {
+                Executor::Local => {
+                    let open = local.as_ref().expect("set above");
+                    pruned += layerfs_store::service::prune_done(open, &ops)?;
+                }
+                Executor::Worker(worker) => {
+                    let listed = ops.iter().map(|op| SdkValue::text(hex(op))).collect();
+                    let request = SdkValue::map([
+                        ("store", SdkValue::text(store)),
+                        ("store_record", record.to_record().clone()),
+                        ("ops", SdkValue::List(listed)),
+                    ]);
+                    let answer = worker.call("store.prune", request, &mut |_| {})?;
+                    pruned += answer
+                        .get_int("pruned")
+                        .and_then(|count| u64::try_from(count).ok())
+                        .unwrap_or(0);
+                }
+            }
+            if pruned == before {
+                // Nothing went: the exported page cannot shrink, so stop
+                // rather than re-read it forever. The line is already written.
+                break;
+            }
+        } else if !has_more {
+            break;
+        } else {
+            next_page += 1;
+        }
+    }
+    let file = layerfs_home::home::paths::log_dir(home).join("gc-audit.jsonl");
+    Ok(SdkValue::map([
+        ("action", SdkValue::text("archive")),
+        ("exported", SdkValue::Int(exported as i64)),
+        ("pruned", SdkValue::Int(pruned as i64)),
+        ("file", SdkValue::text(file.display().to_string())),
+    ]))
 }
 
 /// Who uses a Store or a project, read from the Sandbox records.
@@ -73,149 +214,43 @@ pub const RELATED: Related = Related {
     can_remove_project: inventory::can_remove_project,
 };
 
-/// A machine's records-only state as the Store reads take it
-/// ([`layerfs_store::state::Machines`]): the machine family's one
-/// derivation, [`inventory::machine_state`], so a Store's `blocked_by` says
-/// what `machine get` says of its machine.
-pub fn machine_state(home: &Path, name: &str) -> Result<layerfs_home::state::State, SdkRefusal> {
-    match layerfs_machine::record::MachineRecord::read(home, name) {
-        Ok(record) => inventory::machine_state(home, name, record.as_ref()),
-        // a record that cannot be read blocks the Stores on it, nothing else
-        Err(_) => Ok(layerfs_machine::state::unreadable(name)),
-    }
-}
-
-/// Every Sandbox's `(store, machine)` from the Sandbox records
-/// ([`layerfs_store::get::Sandboxes`]): the machines a PostgreSQL Store's
-/// `connections` name for their Sandboxes. A record that cannot be read
-/// names none.
-pub fn sandbox_stores(home: &Path) -> Vec<(String, String)> {
-    let sandboxes = inventory::sandboxes(home).unwrap_or_default().into_iter();
-    sandboxes
-        .filter_map(|sandbox| {
-            let (store, _) = sandbox.project()?.split_once('/')?;
-            Some((store.to_owned(), sandbox.machine().to_owned()))
-        })
-        .collect()
-}
-
-/// What the Store reads take from the other entities: each machine's
-/// state ([`machine_state`]) and the Sandboxes' Stores
-/// ([`sandbox_stores`]).
-pub fn reads() -> (
-    layerfs_store::state::Machines<'static>,
-    layerfs_store::get::Sandboxes<'static>,
-) {
-    (&machine_state, &sandbox_stores)
-}
-
-/// The machines with a Sandbox of Store `store`.
-fn sandboxes_of(home: &Path, store: &str) -> Vec<String> {
-    layerfs_store::get::sandbox_machines(&sandbox_stores(home), store)
-}
-
 /// `store.remove`: a sqlite Store no Sandbox uses, with its file.
 pub fn remove(home: &Path, name: &StoreName) -> Outcome {
-    layerfs_store::sqlite::remove::remove(home, name, RELATED)
+    layerfs_store::sqlite::family::remove(home, name, RELATED)
 }
 
-/// `store.move`: a sqlite Store from the machine that holds it to
-/// `machine`, one of the two being this computer (C13).
-pub fn move_to(home: &Path, events: &mut Events<'_>, store: &str, machine: &str) -> Outcome {
-    layerfs_store::sqlite::transfer::phases::move_to(home, events, store, machine, RELATED)
+/// `store.push`: a sqlite Store from native to a machine.
+pub fn push(home: &Path, events: &mut Events<'_>, request: &StorePush) -> Outcome {
+    layerfs_store::sqlite::family::push(home, events, request, RELATED)
 }
 
-/// `store.disconnect(store, { machine })`: without `machine`, forget a
-/// PostgreSQL Store (its data stays), refused `InUse` while a process
-/// holds it or a Sandbox of its projects exists; with it, remove that
-/// machine's own address, after which it dials the Store's again, and
-/// forget what was seen of its reach (spec v23): `NotFound` when it has
-/// neither. A sqlite Store is `InvalidInput`, naming `store remove`.
-pub fn disconnect(home: &Path, name: &StoreName, machine: Option<&MachineName>) -> Outcome {
-    let Some(machine) = machine.map(|m| m.as_str()) else {
-        return connect::disconnect(home, name, RELATED);
-    };
-    let record = check::postgresql_record(home, name)?;
-    let seen = layerfs_store::observed::read(home, name)
-        .of(machine)
-        .is_some();
-    if record.own_connection(machine).is_none() && !seen {
-        return Err(refused(
-            "NotFound",
-            format!("machine {machine} has no address of its own for Store {name}, and none was seen connecting"),
-        ));
-    }
-    check::save_own(
-        home,
-        name,
-        machine,
-        &OwnConnection::default(),
-        record.binding(),
-    )?;
-    Ok(connect::disconnected(name, Some(machine)))
+/// `store.pull`: a sqlite Store from its machine to native.
+pub fn pull(home: &Path, events: &mut Events<'_>, name: &str) -> Outcome {
+    layerfs_store::sqlite::family::pull(home, events, name, RELATED)
 }
 
-/// `store.connect(store, url, { auth, machine, synchronous_commit })`. A
-/// Store not connected yet is connected from this process (`--auth`
-/// required, `--machine` refused). On a connected Store the URL becomes
-/// the address every machine dials, proven from this process, or with
-/// `machine` that machine's own, proven from that machine; either refuses
-/// `--auth` and `--synchronous-commit`. A sqlite Store of the name is
-/// `Exists`.
-pub fn connect(
-    home: &Path,
-    events: &mut Events<'_>,
-    request: &StoreConnect,
-    machine: Option<&MachineName>,
-) -> Outcome {
-    let name = request.store.as_str();
-    let Some(record) = StoreRecord::read(home, name)? else {
-        if let Some(machine) = machine {
-            return Err(refused(
-                "InvalidInput",
-                format!(
-                    "Store {name} is not connected: connect it first without --machine, then `layerfs store connect {name} <url> --machine {machine}`"
-                ),
-            ));
-        }
-        return connect::connect(home, request);
-    };
-    if record.kind()? != StoreKind::Postgresql {
-        return Err(refused(
-            "Exists",
-            format!("a sqlite Store named {name} exists"),
-        ));
-    }
-    let Some(machine) = machine.map(|m| m.as_str()) else {
-        return connect::readdress(home, request, &sandboxes_of(home, name));
-    };
-    if request.auth.is_some() {
-        let uses = record.text("auth").unwrap_or("no saved login");
-        return Err(refused(
-            "InvalidInput",
-            format!("a machine's own connection takes no --auth; {name} uses {uses}"),
-        ));
-    }
-    connect::refuse_settings(name, request)?;
-    connect::refuse_login_with_fix(name, &request.url, false, Some(machine))?;
-    connect::target(&request.url)?;
-    runs_postgresql_sandboxes(home, name, machine)?;
-    let own = OwnConnection {
-        url: Some(request.url.clone()),
-    };
-    let trial = record.clone().with_own_connection(machine, &own);
-    let checked = check_from(home, events, &trial, machine).1?;
-    check::save_own(home, &request.store, machine, &own, record.binding())?;
-    // its check is what was seen of the machine's reach (spec v23 V23-2)
-    let seen = layerfs_store::observed::Reach::of(&Ok(checked));
-    layerfs_store::observed::record(home, name, Some(machine), &seen);
-    let saved = StoreRecord::of(home, name)?;
-    Ok(connect::answer(
-        &saved,
-        "updated",
-        None,
-        &sandboxes_of(home, name),
-    ))
+/// `store.disconnect`: forget a PostgreSQL Store; its data stays.
+pub fn disconnect(home: &Path, name: &StoreName) -> Outcome {
+    layerfs_store::postgresql::connect::disconnect(home, name, RELATED)
+}
+
+/// `store.update(name, { machine, url, password, synchronous_commit,
+/// clear })`. No `Debug`: it names a password reference.
+#[derive(Clone)]
+pub struct StoreUpdate {
+    /// The PostgreSQL Store.
+    pub name: StoreName,
+    /// The machine whose own connection is set or cleared; none for the
+    /// Store's own.
+    pub machine: Option<MachineName>,
+    /// The new URL (no password).
+    pub url: Option<String>,
+    /// The password's new reference.
+    pub password: Option<String>,
+    /// The Store's new `synchronous_commit`.
+    pub synchronous_commit: Option<String>,
+    /// Remove the machine's own connection.
+    pub clear: bool,
 }
 
 /// Refused unless machine `machine` exists and its platform runs
@@ -286,7 +321,7 @@ fn from_machine(
 /// `store.reach`. The URL is built as the machine's Sandboxes' calls build
 /// it. Answers the check, `{ at, server_version, latency_ms }`, or its
 /// refusal; either way with the host it dialled, once known.
-pub(crate) fn check_from(
+fn check_from(
     home: &Path,
     events: &mut Events<'_>,
     record: &StoreRecord,
@@ -295,12 +330,6 @@ pub(crate) fn check_from(
     let name = record.name();
     let (postgresql, hint) = match layerfs_sandbox::route::reached(home, machine, record) {
         Ok(reached) => reached,
-        #[cfg(feature = "machine")]
-        Err(refusal) => {
-            let refusal = crate::machine::RELATED.nameless_fix(home, machine, refusal);
-            return (None, Err(refusal));
-        }
-        #[cfg(not(feature = "machine"))]
         Err(refusal) => return (None, Err(refusal)),
     };
     let host = match postgresql.url().and_then(connect::target) {
@@ -332,10 +361,138 @@ pub(crate) fn check_from(
     (Some(host), checked)
 }
 
+/// `store.update`: changes PostgreSQL Store `name`'s own connection
+/// (`layerfs-store`'s part), or with `machine` the connection that machine
+/// alone dials: `url` and `password` replace the ones it has (either may
+/// be given alone), checked from that machine before they are saved, and
+/// `clear` removes its own connection, dialling nothing. Every refusal of
+/// the input comes before any connection; a failed check saves nothing.
+/// Answers the Store as `store.get` shows it.
+pub fn update(home: &Path, events: &mut Events<'_>, request: &StoreUpdate) -> Outcome {
+    let name = &request.name;
+    let Some(machine) = request.machine.as_ref().map(|m| m.as_str()) else {
+        if request.clear {
+            return Err(refused(
+                "InvalidInput",
+                "--clear removes a machine's own connection; name it with --machine",
+            ));
+        }
+        return store_update::update(
+            home,
+            &store_update::StoreUpdate {
+                name: name.clone(),
+                url: request.url.clone(),
+                password: request.password.clone(),
+                synchronous_commit: request.synchronous_commit.clone(),
+            },
+        );
+    };
+    let record = check::postgresql_record(home, name)?;
+    if request.synchronous_commit.is_some() {
+        return Err(refused(
+            "InvalidInput",
+            "synchronous_commit is the Store's setting; update it without --machine",
+        ));
+    }
+    let given = request.url.is_some() || request.password.is_some();
+    let current = record.own_connection(machine);
+    if request.clear {
+        if given {
+            return Err(refused(
+                "InvalidInput",
+                "--clear takes no --url or --password",
+            ));
+        }
+        if current.is_none() {
+            return Err(refused(
+                "InvalidInput",
+                format!("machine {machine} has no connection of its own to Store {name}"),
+            ));
+        }
+        check::save_own(
+            home,
+            name,
+            machine,
+            &OwnConnection::default(),
+            record.binding(),
+        )?;
+        return layerfs_store::sqlite::family::get(home, name);
+    }
+    if !given {
+        return Err(refused(
+            "InvalidInput",
+            "nothing to update: give --url or --password for the machine, or --clear",
+        ));
+    }
+    runs_postgresql_sandboxes(home, name, machine)?;
+    if let Some(url) = &request.url {
+        connect::refuse_password(url)?;
+        connect::target(url)?;
+    }
+    if let Some(password) = &request.password {
+        layerfs_home::secrets::resolve(password)?;
+    }
+    let current = current.unwrap_or_default();
+    let own = OwnConnection {
+        url: request.url.clone().or(current.url),
+        password: request.password.clone().or(current.password),
+        home: current.home,
+    };
+    let trial = record.clone().with_own_connection(machine, &own);
+    check_from(home, events, &trial, machine).1?;
+    check::save_own(home, name, machine, &own, record.binding())?;
+    layerfs_store::sqlite::family::get(home, name)
+}
+
+/// `store.status`: a Store's live state; with `machine`, also the check of
+/// that machine's connection to a PostgreSQL Store, run from the machine
+/// now and recorded nowhere: `check: { machine, host, ok: true, at,
+/// server_version, latency_ms }`, or `ok: false` with the refusal as
+/// `error: { code, message }`. A sqlite Store, an unknown machine or a
+/// platform that runs no PostgreSQL Sandboxes refuses the call.
+pub fn status(
+    home: &Path,
+    events: &mut Events<'_>,
+    name: &StoreName,
+    machine: Option<&MachineName>,
+) -> Outcome {
+    let Some(machine) = machine.map(|m| m.as_str()) else {
+        return layerfs_store::sqlite::family::status(home, name);
+    };
+    let record = check::postgresql_record(home, name)?;
+    runs_postgresql_sandboxes(home, name, machine)?;
+    let status = layerfs_store::sqlite::family::status(home, name)?;
+    let (host, checked) = check_from(home, events, &record, machine);
+    let mut fields = vec![
+        ("machine".to_owned(), SdkValue::text(machine)),
+        (
+            "host".to_owned(),
+            host.map(SdkValue::Text).unwrap_or_default(),
+        ),
+        ("ok".to_owned(), SdkValue::Bool(checked.is_ok())),
+    ];
+    match checked {
+        Ok(SdkValue::Map(checked)) => fields.extend(checked),
+        Ok(_) => {}
+        Err(refusal) => fields.push((
+            "error".to_owned(),
+            SdkValue::map([
+                ("code", SdkValue::Text(refusal.code)),
+                ("message", SdkValue::Text(refusal.message)),
+            ]),
+        )),
+    }
+    let SdkValue::Map(mut out) = status else {
+        return Ok(status);
+    };
+    out.push(("check".to_owned(), SdkValue::Map(fields)));
+    Ok(SdkValue::Map(out))
+}
+
 /// `store.reach` in a machine's worker: `{ store, store_record, postgresql }`
-/// from the caller, which put the saved login into the URL this machine
-/// dials. Answers the check `store.connect --machine` and `store.doctor`
-/// ask for.
+/// from the caller, which resolved the password and the URL this machine
+/// dials. Answers the check `store.update --machine` and `store.status
+/// --machine` ask for.
 pub fn reach_in_worker(args: &SdkValue) -> Outcome {
     let store = args.get_text("store").unwrap_or("");
     StoreName::parse(store)?;

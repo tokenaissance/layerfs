@@ -55,10 +55,7 @@ A conflict is decided, not left open: text files get marker blocks, binary or
 type conflicts keep one side, and each path is listed with a `ConflictKind`.
 `branch.merge` refuses a conflicted result; merge-on-commit installs it as the
 Workspace's base and refuses the next Commit while a listed file still holds a
-complete marker block ([Merge](merge.md)). The Workspace's view changes where
-the merge changed it; a merge whose changes rows written after the capture
-cover is not installed at all, clean or conflicted (`LiveConflict`,
-[Commit](../../engine/commit/README.md#what-it-does)).
+complete marker block ([Merge](merge.md)).
 
 ### Tree comparison
 
@@ -167,7 +164,7 @@ listed conflict with a defined result.
 ## Demonstration
 
 `layerfs-content` tests use in-memory trees. The `layerfs-store-service` tests
-run Project Init into a temporary SQLite Store and call the SDK
+run Project Init into a temporary Disposable SQLite Store and call the SDK
 method table in process; they need no Docker, root or PostgreSQL server.
 Each command gets a wall timeout of at most 120 s.
 

@@ -191,7 +191,6 @@ fn relink(
             &layerfs_store_service::store::CommitOptions {
                 force: false,
                 message: Some("relink".to_owned()),
-                expected: None,
             },
             CommitVia::Files,
         )
@@ -245,7 +244,7 @@ fn clean_relink_commit() {
     permissions.set_readonly(false);
     std::fs::set_permissions(&path, permissions).unwrap();
     let opened = open_store_observed(
-        PersistenceConfig::sqlite(&path).with_sqlite_profile(SqlitePersistenceProfile::Normal),
+        PersistenceConfig::sqlite(&path).with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         &binding,
         installed::CURSOR,
         OwnerConfig::default().namespaces,

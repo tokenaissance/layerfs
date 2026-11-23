@@ -426,7 +426,6 @@ fn recovery_request_admits_only_the_recovery_set() {
             token,
             force: false,
             message: None,
-            expected: None,
         }
     )));
 }

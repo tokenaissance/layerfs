@@ -1,7 +1,7 @@
 //! One attempted authenticated control exchange, retaining the original unknown.
 use layerfs_bridge::{
-    control::{Answer, Call, ControlError, Reply, Request},
-    duplex::{ChannelError, CloseHandle, Connection},
+    control::{Answer, Call, ControlError, MountPlace, Reply, Request, SdkValue},
+    duplex::{ChannelError, ChannelWork, CloseHandle, Connection},
 };
 use std::fmt;
 /// One sequential control connection. Concurrent callers may use separate channels.
@@ -9,7 +9,15 @@ pub struct Control {
     connection: Connection,
     next: u64,
     failed: bool,
+    /// While set, ordinary requests travel as traced observations.
+    traced: Option<[u8; 32]>,
+    /// Telemetry of traced replies, kept until the caller takes it.
+    telemetry: Vec<SdkValue>,
+    /// The Sandbox and machine a mount through this channel belongs to.
+    pub(crate) place: MountPlace,
 }
+/// Most traced replies kept between takes; later telemetry is dropped.
+const TELEMETRY: usize = 16;
 /// Exact point at which the original control exchange stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlPhase {
@@ -55,7 +63,19 @@ impl Control {
             connection,
             next: 1,
             failed: false,
+            traced: None,
+            telemetry: Vec::new(),
+            place: MountPlace::default(),
         }
+    }
+    /// Sends later ordinary requests as traced observations under `scope`,
+    /// or plainly again with `None`. Results are unchanged either way.
+    pub fn trace(&mut self, scope: Option<[u8; 32]>) {
+        self.traced = scope;
+    }
+    /// The telemetry of the traced replies received since the last take.
+    pub fn take_telemetry(&mut self) -> Vec<SdkValue> {
+        std::mem::take(&mut self.telemetry)
     }
     /// True once this connection cannot carry another call: an exchange
     /// failed on it, its session ended, or an application fence
@@ -80,6 +100,22 @@ impl Control {
         request: Request,
         bodies: &[Vec<u8>],
     ) -> Result<Reply, Box<ControlFailure>> {
+        let request = match (self.traced, request) {
+            (Some(scope), request)
+                if !matches!(
+                    request,
+                    Request::Observed { .. } | Request::Hello(_) | Request::EndSession
+                ) =>
+            {
+                Request::Observed {
+                    scope,
+                    request: Box::new(request),
+                    traced: true,
+                }
+            }
+            (_, request) => request,
+        };
+        let traced = matches!(request, Request::Observed { traced: true, .. });
         let call = Call {
             id: self.next,
             request,
@@ -127,7 +163,12 @@ impl Control {
             phase = ControlPhase::Validate;
             received = Some(answer);
             let answer = received.as_ref().expect("original answer");
-            if answer.id != call.id || !matches_reply(&call.request, &answer.reply) {
+            // A traced answer is validated by the operation's own reply.
+            let reply = match &answer.reply {
+                Reply::Observed { reply, .. } if traced => reply.as_ref(),
+                reply => reply,
+            };
+            if answer.id != call.id || !matches_reply(&call.request, reply) {
                 return Err(ControlCause::Protocol(ControlError(
                     "original control correlation or result",
                 )));
@@ -142,7 +183,17 @@ impl Control {
                     .close()
                     .map_err(ControlCause::Channel)?;
             }
-            Ok(received.take().expect("checked original answer").reply)
+            Ok(
+                match received.take().expect("checked original answer").reply {
+                    Reply::Observed { reply, telemetry } => {
+                        if self.telemetry.len() < TELEMETRY {
+                            self.telemetry.push(telemetry);
+                        }
+                        *reply
+                    }
+                    reply => reply,
+                },
+            )
         })();
         match result {
             Ok(reply) => Ok(reply),
@@ -206,6 +257,10 @@ impl Control {
     /// shutting it down quarantines the channel.
     pub fn close_handle(&self) -> Result<CloseHandle, ChannelError> {
         self.connection.close_handle()
+    }
+    /// Actual cumulative duplex send/receive work for this connection.
+    pub fn channel_work(&self) -> (ChannelWork, ChannelWork) {
+        (self.connection.send.work(), self.connection.receive.work())
     }
     /// Transfers the original channel owner; no reconnect or failure reset occurs.
     pub fn into_connection(self) -> Connection {
@@ -299,30 +354,9 @@ fn matches_reply(request: &Request, reply: &Reply) -> bool {
     }
 }
 
-/// In plain words, never `Debug` text: where the exchange stopped, its
-/// cause, whether the request was sent (then its outcome is not known) and
-/// a failed connection fence.
 impl fmt::Display for ControlFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let at = match self.phase {
-            ControlPhase::Encode => "before anything was sent",
-            ControlPhase::Send => "while the request was sent",
-            ControlPhase::Receive => "while its answer was awaited",
-            ControlPhase::Validate => "because its answer did not match the request",
-            ControlPhase::Fence => "while the connection was closed",
-        };
-        write!(f, "the connection to the Sandbox's daemon failed {at}: ")?;
-        match &self.cause {
-            ControlCause::Channel(error) => write!(f, "{error}")?,
-            ControlCause::Protocol(error) => write!(f, "{error}")?,
-        }
-        if self.attempted {
-            write!(f, "; {}", layerfs_sandbox_backend::OUTCOME_UNKNOWN)?;
-        }
-        if let Some(error) = &self.fence_error {
-            write!(f, "; closing the connection also failed: {error}")?;
-        }
-        Ok(())
+        write!(f, "control {:?}: {:?}", self.phase, self.cause)
     }
 }
 impl std::error::Error for ControlFailure {}

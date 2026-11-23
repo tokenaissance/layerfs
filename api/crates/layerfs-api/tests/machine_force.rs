@@ -15,9 +15,8 @@ fn call(
         Some(home),
         name,
         SdkValue::Map(
-            (args.iter())
+            args.iter()
                 .map(|(name, value)| ((*name).to_owned(), value.clone()))
-                .chain([("detail".to_owned(), SdkValue::Bool(true))])
                 .collect(),
         ),
         &mut |_| {},
@@ -54,7 +53,6 @@ esac
         &SdkValue::map([
             ("name", t("vm")),
             ("platform", t("lima")),
-            ("vm_name", t("layerfs-test-vm")),
             ("state", t("running")),
         ]),
     )
@@ -90,34 +88,29 @@ esac
             ("name", t("shop")),
             ("kind", t("sqlite")),
             ("machine", t("vm")),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
         ]),
     )
     .unwrap();
     let store_record = std::fs::read(paths::store_record(&home, "shop")).unwrap();
     std::fs::write(&store, b"saved-store").unwrap();
     std::fs::write(&disk, b"saved-disk").unwrap();
-    let denied = call(&home, "machine.stop", &[("machine", t("vm"))]).unwrap_err();
+    let denied = call(&home, "machine.stop", &[("name", t("vm"))]).unwrap_err();
     assert_eq!(denied.code, "InUse");
     let stopped = call(
         &home,
         "machine.stop",
-        &[("machine", t("vm")), ("force", SdkValue::Bool(true))],
+        &[("name", t("vm")), ("force", SdkValue::Bool(true))],
     )
     .unwrap();
-    assert_eq!(stopped.get_text("outcome"), Some("stopped"));
-    // a list's count only beside a cut list (more than 20)
-    assert_eq!(
-        stopped.get("stopped_sandboxes_count"),
-        Some(&SdkValue::Null)
-    );
+    assert_eq!(stopped.get_text("state"), Some("stopped"));
     assert!(stopped.get_bool("forced"));
     assert_eq!(
         stopped.get("stopped_sandboxes"),
         Some(&SdkValue::List(vec![t("one"), t("two")]))
     );
     assert_eq!(
-        stopped.get("unknown_workspaces"),
+        stopped.get("unknown"),
         Some(&SdkValue::List(vec![t("one:work"), t("two:work")]))
     );
     assert!(
@@ -126,10 +119,8 @@ esac
     );
     assert!(!paths::worker_record(&home, "vm").exists());
     assert!(paths::machine_record(&home, "vm").exists());
-    // its Sandboxes' runtimes stopped with it: broken, missing
-    let sandbox = call(&home, "sandbox.get", &[("sandbox", t("one"))]).unwrap();
-    assert_eq!(sandbox.get_text("state"), Some("broken"), "{sandbox:?}");
-    assert_eq!(sandbox.get_text("reason"), Some("missing"), "{sandbox:?}");
+    let sandbox = call(&home, "sandbox.get", &[("name", t("one"))]).unwrap();
+    assert_eq!(sandbox.get_text("state"), Some("gone"));
     let logs = std::fs::read_to_string(root.join("calls")).unwrap();
     assert_eq!(
         logs.lines()
@@ -152,12 +143,10 @@ esac
     let again = call(
         &home,
         "machine.stop",
-        &[("machine", t("vm")), ("force", SdkValue::Bool(true))],
+        &[("name", t("vm")), ("force", SdkValue::Bool(true))],
     )
     .unwrap();
-    assert_eq!(again.get_text("outcome"), Some("stopped"));
-    let got = call(&home, "machine.get", &[("machine", t("vm"))]).unwrap();
-    assert_eq!(got.get_text("state"), Some("stopped"));
+    assert_eq!(again.get_text("state"), Some("stopped"));
     // A failed later provider operation retains worker/state and explicit unresolved custody.
     write_record(&paths::worker_record(&home, "vm"), &worker).unwrap();
     std::fs::write(root.join("refuse"), b"fail once").unwrap();
@@ -165,7 +154,7 @@ esac
     let failed = call(
         &home,
         "machine.stop",
-        &[("machine", t("vm")), ("force", SdkValue::Bool(true))],
+        &[("name", t("vm")), ("force", SdkValue::Bool(true))],
     )
     .unwrap_err();
     assert_eq!(failed.code, "Failed");
@@ -184,24 +173,22 @@ esac
     let recovered = call(
         &home,
         "machine.stop",
-        &[("machine", t("vm")), ("force", SdkValue::Bool(true))],
+        &[("name", t("vm")), ("force", SdkValue::Bool(true))],
     )
     .unwrap();
-    assert_eq!(recovered.get_text("outcome"), Some("stopped"));
+    assert_eq!(recovered.get_text("state"), Some("stopped"));
     assert_eq!(
-        call(&home, "sandbox.get", &[("sandbox", t("one"))])
+        call(&home, "sandbox.get", &[("name", t("one"))])
             .unwrap()
-            .get_text("reason"),
-        Some("missing")
+            .get_text("state"),
+        Some("gone")
     );
     let native = call(
         &home,
         "machine.stop",
-        &[("machine", t("native")), ("force", SdkValue::Bool(true))],
+        &[("name", t("native")), ("force", SdkValue::Bool(true))],
     )
     .unwrap();
-    assert_eq!(native.get_text("outcome"), Some("stopped"));
-    let native = call(&home, "machine.get", &[("machine", t("native"))]).unwrap();
     assert_eq!(native.get_text("state"), Some("ready"));
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -246,7 +233,7 @@ fn native_force_stop_refused_before_any_signal_leaves_no_uncertain_op() {
     let refused = call(
         &home,
         "machine.stop",
-        &[("machine", t("native")), ("force", SdkValue::Bool(true))],
+        &[("name", t("native")), ("force", SdkValue::Bool(true))],
     )
     .unwrap_err();
     assert_eq!(refused.code, "Unavailable", "{refused:?}");

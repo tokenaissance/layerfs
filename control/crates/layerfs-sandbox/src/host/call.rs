@@ -26,7 +26,7 @@ pub enum Op {
     Mount,
     /// `workspace.exec`.
     Exec,
-    /// `workspace.cancel` (D-11: it rides `sandbox.host` too).
+    /// `workspace.exec_cancel` (D-11: it rides `sandbox.host` too).
     ExecCancel,
     /// `workspace.commit`.
     Commit,
@@ -45,7 +45,7 @@ pub const OPS: [(Op, &str); 10] = [
     (Op::Capacity, layerfs_bridge::control::OPERATION),
     (Op::Mount, "workspace.mount"),
     (Op::Exec, "workspace.exec"),
-    (Op::ExecCancel, "workspace.cancel"),
+    (Op::ExecCancel, "workspace.exec_cancel"),
     (Op::Commit, "workspace.commit"),
     (Op::Unmount, "workspace.unmount"),
     (Op::Status, "backend.daemon.workspace.status"),
@@ -120,41 +120,34 @@ pub enum Call {
         branch: Option<String>,
         name: Option<String>,
     },
-    /// `workspace.exec(path, command, { cwd, env, stdin })` with its exec
-    /// id; `directory` and the Workspace's id (`workspace`) from a caller
-    /// that keeps the Workspace's record and the command's (#535 G4); `cwd`
-    /// is a folder of the Workspace as a path from its root, `env` its
-    /// `K=V` variables and `stdin` its whole standard input (call surface
-    /// 2.0); `tag` is the log tag of the call that asked for it, kept in
-    /// the command's record (layerfs-project#178).
+    /// `workspace.exec(path, command, { exec_id })`; `directory` and the
+    /// Workspace's id (`workspace`) from a caller that keeps the
+    /// Workspace's record and the command's (#535 G4); `spool` sends every
+    /// non-empty stream to its file; `tag` is the log tag of the call that
+    /// asked for it, kept in the command's record (layerfs-project#178).
     Exec {
         path: Option<String>,
         directory: Option<String>,
         command: Option<String>,
-        cwd: Option<String>,
-        env: Vec<String>,
-        stdin: Option<Vec<u8>>,
+        spool: bool,
         exec_id: Option<String>,
         workspace: Option<String>,
         tag: Option<String>,
     },
-    /// `workspace.cancel(path, { exec })`: the command `exec_id` names, or
-    /// with none every command running in the Workspace; the Workspace's
-    /// id (`workspace`) from a caller that keeps the command's record
-    /// (#535 G4), so this side keeps none.
+    /// `workspace.exec_cancel(path, exec_id, { grace_ms })`; the
+    /// Workspace's id (`workspace`) from a caller that keeps the command's
+    /// record (#535 G4), so this side keeps none.
     ExecCancel {
         path: Option<String>,
         exec_id: Option<String>,
         grace_ms: Option<i64>,
         workspace: Option<String>,
     },
-    /// `workspace.commit(path, { force, expected })`; a flag a caller did
-    /// not send is `None`; `expected` is the Commit id (hex) the Branch's
-    /// head must be (call surface 2.0).
+    /// `workspace.commit(path, { force })`; a flag a caller did not send
+    /// is `None`.
     Commit {
         path: Option<String>,
         force: Option<bool>,
-        expected: Option<String>,
     },
     /// `workspace.unmount(path, { discard, force })`.
     Unmount {
@@ -162,12 +155,8 @@ pub enum Call {
         discard: Option<bool>,
         force: Option<bool>,
     },
-    /// A Workspace's status, its changes listed at or below folder `under`
-    /// when it names one (call surface 2.0).
-    Status {
-        path: Option<String>,
-        under: Option<String>,
-    },
+    /// A Workspace's status.
+    Status { path: Option<String> },
 }
 
 impl Call {
@@ -195,7 +184,7 @@ impl Call {
             | Self::ExecCancel { path, .. }
             | Self::Commit { path, .. }
             | Self::Unmount { path, .. }
-            | Self::Status { path, .. } => path.as_deref(),
+            | Self::Status { path } => path.as_deref(),
             _ => None,
         }
     }
@@ -208,7 +197,7 @@ impl Call {
             | Self::ExecCancel { path, .. }
             | Self::Commit { path, .. }
             | Self::Unmount { path, .. }
-            | Self::Status { path, .. } => *path = resolved,
+            | Self::Status { path } => *path = resolved,
             _ => {}
         }
         self
@@ -227,6 +216,9 @@ pub struct Deploy {
     /// The Sandbox directory prefix, `layerfs-<home id prefix>-`: a new
     /// Sandbox's run folder is `<prefix><name>`.
     pub container_prefix: Option<String>,
+    /// The prefix before layerfs-project#180, `lfs-<home id prefix>-`: a
+    /// Sandbox recorded under it is reopened by that name; none is made.
+    pub legacy_prefix: Option<String>,
     /// The daemon executable.
     pub daemon: Option<String>,
     /// A namespaces Sandbox's image archive.

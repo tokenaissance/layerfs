@@ -6,25 +6,37 @@
 //! Store on any other machine (#536 H11). The folder is always on the
 //! caller's host: for a worker this process copies it to the machine
 //! first (H11a). Records in the home list projects.
+use crate::calls::Page;
 use crate::lease;
-use crate::place::{self, Executor};
+use crate::open_args::OpenArgs;
+use crate::place::{self, Executor, Worker};
 use crate::project::add::{add_project, ProjectAdd};
-use crate::project::frame::InitFrame;
+use crate::project::frame::{InitFrame, ListingFrame, ListingReply};
 use crate::project::postgres_init::PgProjectAdd;
 use crate::project::record::ProjectRecord;
-use crate::project::{live, op};
 use crate::record::{StoreRecord, StoreRef};
 use crate::resolve;
+use crate::service;
 use crate::sqlite::family::progress;
-use layerfs_bridge::control::SdkValue;
+use layerfs_bridge::control::{SdkRefusal, SdkValue};
 use layerfs_home::events::Events;
+use layerfs_home::home::paths;
 use layerfs_home::names::{ProjectRef, StoreName};
-use layerfs_home::op::FIELD;
-use layerfs_home::outcome::{refused, Outcome};
+use layerfs_home::outcome::{failed, refused, Outcome, View};
+use layerfs_store_service::history::lookup;
 use std::path::Path;
 
 /// Default Init time limit: one hour.
 const INIT_TIMEOUT_MS: i64 = 3_600_000;
+
+/// `project.list(store?, { page_size, page_pos })`.
+#[derive(Clone, Debug, Default)]
+pub struct ProjectList {
+    /// The one Store it lists.
+    pub store: Option<StoreName>,
+    /// The page.
+    pub page: Page,
+}
 
 /// `project.init(project, folder, { timeout })`.
 #[derive(Clone, Debug)]
@@ -37,54 +49,189 @@ pub struct ProjectInit {
     pub timeout: Option<i64>,
 }
 
-/// The project.listed check `project doctor` makes: project `project`'s
-/// record against its Store's own filtered list, read where the Store's
-/// calls run. A project its Store no longer lists (retired, or absent) is
-/// `NoSuchProject` even when its home entry remains (spec §4.2); a Store
-/// that cannot be listed is its refusal. Answers the project's record
-/// fields ([`ProjectRecord::answer`]).
+/// One project a Store's filtered listing names: its name and LayerStack.
+struct LiveProject {
+    name: String,
+    stack: Vec<u8>,
+}
+
+/// The live projects Store `store` lists, after the retired/hidden ones are
+/// filtered out (spec §4.2). Every route reads the listing where the
+/// Store's calls run (T4.5c): in this process for a sqlite Store on this
+/// machine and for a PostgreSQL Store, in the machine's worker for a sqlite
+/// Store on another machine. A Store that cannot be listed is `Err`.
+fn live_projects(
+    home: &Path,
+    store: &str,
+    record: &StoreRecord,
+) -> std::result::Result<Vec<LiveProject>, SdkRefusal> {
+    let store_ref = record.store_ref()?;
+    record.unblocked()?;
+    if let Executor::Worker(mut worker) = place::plan(home, store_ref)? {
+        return live_projects_on_worker(&mut worker, store, record);
+    }
+    let (store_path, postgresql) = match store_ref {
+        StoreRef::Postgres { .. } => (
+            record.postgresql_key(home, store),
+            Some(crate::postgresql::connect::selection(record)?),
+        ),
+        StoreRef::Sqlite { .. } => (paths::store_file(home, store), None),
+    };
+    let open = OpenArgs {
+        home: Some(home.to_path_buf()),
+        store: Some(store.to_owned()),
+        store_path: Some(store_path.display().to_string()),
+        store_record: Some(record.to_record().clone()),
+        postgresql,
+        ..OpenArgs::default()
+    };
+    let stacks = service::with_service(&open, |service| {
+        service
+            .store
+            .published(layerfs_project::store::projects)
+            .map_err(lookup::published)
+    })?;
+    Ok(stacks
+        .into_iter()
+        .map(|stack| LiveProject {
+            name: stack.name.as_str().to_owned(),
+            stack: stack.id.to_bytes().to_vec(),
+        })
+        .collect())
+}
+
+/// The listing a worker-backed Store sends (T4.5c): the worker runs the
+/// same `layerfs_project::store::projects` under its own root, so a project
+/// retired in the Store is hidden here as it is for a local one.
+fn live_projects_on_worker(
+    worker: &mut Worker,
+    store: &str,
+    record: &StoreRecord,
+) -> std::result::Result<Vec<LiveProject>, SdkRefusal> {
+    let frame = ListingFrame {
+        store: StoreName::parse(store)?,
+        store_record: Some(record.to_record().clone()),
+    };
+    // A listing whose answer was lost is `Unknown`; name the Store it listed
+    // so the detail carries `{entity: {kind, name}, phase, op}` (spec §10 A6).
+    let answer = worker
+        .call("project.list", frame.encode(), &mut |_| {})
+        .map_err(|refusal| crate::unknown::named_unknown(refusal, "store", store, None))?;
+    let reply = ListingReply::decode(&answer)?;
+    Ok(reply
+        .projects
+        .into_iter()
+        .map(|project| LiveProject {
+            name: project.name,
+            stack: project.stack.to_bytes().to_vec(),
+        })
+        .collect())
+}
+
+/// Whether `project` is in `live`: by the stack id its record holds, or,
+/// for a record without one, by its name (spec §4.2).
+fn listed(project: &ProjectRecord, name: &str, live: &[LiveProject]) -> bool {
+    match project.stack() {
+        Some(stack) => live.iter().any(|item| item.stack == stack),
+        None => live.iter().any(|item| item.name == name),
+    }
+}
+
+/// One project as callers see it; a record that does not read shows no
+/// `created`.
+fn summary(home: &Path, store: &str, name: &str, record: &StoreRecord, view: View) -> SdkValue {
+    let project = ProjectRecord::read(home, store, name).ok().flatten();
+    let project =
+        project.unwrap_or_else(|| ProjectRecord::from_record(store, name, SdkValue::Null));
+    project.to_sdk(view, record)
+}
+
+/// `project.get(project)`: one project's record. A project its Store no
+/// longer lists (retired, or absent) is `NoSuchProject` even when its home
+/// entry remains (spec §4.2).
 pub fn get(home: &Path, project: &ProjectRef) -> Outcome {
     let target = resolve::target(home, &project.to_string())?;
-    let live = live::projects(home, &target.store, &target.record, false)
+    let live = live_projects(home, &target.store, &target.record)
         .map_err(|refusal| crate::unknown::named_unknown(refusal, "store", &target.store, None))?;
     let record = ProjectRecord::read(home, &target.store, &target.project)?
         .ok_or_else(|| refused("NoSuchProject", format!("no project {project}")))?;
-    if live::find(&record, &target.project, &live).is_none() {
+    if !listed(&record, &target.project, &live) {
         return Err(refused("NoSuchProject", format!("no project {project}")));
     }
-    Ok(layerfs_home::helpers::map_of(record.answer(&target.record)))
+    Ok(summary(
+        home,
+        &target.store,
+        &target.project,
+        &target.record,
+        View::Full,
+    ))
 }
 
-/// `project.init`'s answer: the project's record fields, `commit` (main's
-/// first Layer, the full id), `root` and `outcome` `created`. `added` is
-/// what the add answered (`layer`, `root`).
-fn created(
-    home: &Path,
-    store: &StoreName,
-    name: &str,
-    record: &StoreRecord,
-    added: &SdkValue,
-) -> Outcome {
-    let project = ProjectRecord::read(home, store.as_str(), name)?
-        .unwrap_or_else(|| ProjectRecord::from_record(store.as_str(), name, SdkValue::Null));
-    let mut fields: Vec<(String, SdkValue)> = vec![
-        (
-            "commit".to_owned(),
-            added.get("layer").cloned().unwrap_or_default(),
-        ),
-        ("outcome".to_owned(), SdkValue::text("created")),
-    ];
-    fields.extend(
-        project
-            .answer(record)
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v)),
-    );
-    fields.push((
-        "root".to_owned(),
-        added.get("root").cloned().unwrap_or_default(),
-    ));
-    Ok(SdkValue::Map(fields))
+/// `project.list(store?, { page_size, page_pos })`, by Store then name.
+pub fn list(home: &Path, request: &ProjectList) -> Outcome {
+    let stores: Vec<(String, StoreRecord)> = match &request.store {
+        Some(store) => {
+            // A named listing agrees with `project.get` and every other Store
+            // call: a Store the home does not record is `NoSuchStore` (spec
+            // §4.2), never the home-level `NotFound`.
+            let record = StoreRecord::read(home, store)?
+                .ok_or_else(|| refused("NoSuchStore", format!("no Store named {store}")))?;
+            vec![(store.to_string(), record)]
+        }
+        None => {
+            let mut records = Vec::new();
+            for store in paths::names(&home.join("store")).map_err(failed)? {
+                if let Some(record) = StoreRecord::read(home, &store)? {
+                    records.push((store, record));
+                }
+            }
+            records
+        }
+    };
+    let mut items = Vec::new();
+    for (store, record) in stores {
+        // The listing is the Store's own filtered one (spec §4.2), read
+        // where its calls run (T4.5c): a home entry whose project is hidden
+        // or absent is not listed. An all-Stores listing omits a Store it
+        // cannot list; a named one reports the refusal.
+        let live = match live_projects(home, &store, &record) {
+            Ok(live) => live,
+            Err(refusal) => {
+                if request.store.is_some() {
+                    // A named Store it cannot list is `Busy`/`Unknown`,
+                    // naming the Store in the `Unknown` detail (spec §10 A6).
+                    return Err(crate::unknown::named_unknown(
+                        refusal, "store", &store, None,
+                    ));
+                }
+                continue;
+            }
+        };
+        for name in paths::names(&paths::store_dir(home, &store).join("project")).map_err(failed)? {
+            let Some(project) = ProjectRecord::read(home, &store, &name)? else {
+                continue;
+            };
+            if !listed(&project, &name, &live) {
+                continue;
+            }
+            items.push(summary(home, &store, &name, &record, View::List));
+        }
+    }
+    let size = request.page.size.unwrap_or(50).clamp(1, 1000) as usize;
+    let pos = request.page.pos.unwrap_or(0).max(0) as usize;
+    let total = items.len();
+    let page: Vec<SdkValue> = items.into_iter().skip(pos).take(size).collect();
+    let more = pos + page.len() < total;
+    let next = if more {
+        SdkValue::Int((pos + page.len()) as i64)
+    } else {
+        SdkValue::Null
+    };
+    Ok(SdkValue::map([
+        ("items", SdkValue::List(page)),
+        ("has_more", SdkValue::Bool(more)),
+        ("next_page_pos", next),
+    ]))
 }
 
 /// The add of `folder` as project `name` of Store `store` in `home`.
@@ -109,10 +256,6 @@ fn project_add(
 /// is a push's (#536 §10b), `{ phase, done, total }`: `check`, `send`
 /// (bytes, to a worker only), `install` (Init adds the folder to the
 /// Store) and `record` (the home's project record), whatever the route.
-/// The project's entry is claimed with the Init's `op` before the first
-/// effect and settled by the outcome ([`crate::project::op`]): while it
-/// runs the project is listed `busy`, and an Init whose outcome is not
-/// known leaves it `broken` `unresolved`.
 pub fn init(home: &Path, events: &mut Events<'_>, request: &ProjectInit) -> Outcome {
     let home = home.to_path_buf();
     let (store, name) = (&request.project.store, request.project.project.as_str());
@@ -123,13 +266,6 @@ pub fn init(home: &Path, events: &mut Events<'_>, request: &ProjectInit) -> Outc
             "the folder must be an absolute path",
         ));
     }
-    // a folder that is not there, or not a directory, is refused before the
-    // entry is claimed, so it leaves nothing behind whatever the route; a
-    // link is left to the route, as before
-    let link = std::fs::symlink_metadata(folder).is_ok_and(|meta| meta.file_type().is_symlink());
-    if !link {
-        crate::project::send::root(Path::new(folder))?;
-    }
     let record = StoreRecord::read(&home, store)?.ok_or_else(|| {
         refused(
             "NotFound",
@@ -139,31 +275,9 @@ pub fn init(home: &Path, events: &mut Events<'_>, request: &ProjectInit) -> Outc
     record.unblocked()?;
     progress(events, "check", None);
     let timeout = request.timeout.unwrap_or(INIT_TIMEOUT_MS);
-    op::claim(&home, store.as_str(), name, "check")?;
-    // a local add keeps its entry for diagnosis on a failure it cannot
-    // classify; a worker's or a PostgreSQL add says `Unknown` when it does
-    // not know
-    let local = matches!(record.store_ref()?, StoreRef::Sqlite { .. })
-        && matches!(place::plan(&home, record.store_ref()?), Ok(Executor::Local));
-    let outcome = route(&home, events, (store, name), folder, timeout, &record);
-    op::settle_init(&home, store.as_str(), name, &outcome, local);
-    outcome
-}
-
-/// Init's add of `folder` as project `name` of Store `store`, where the
-/// Store's calls run, into the entry the Init claimed.
-fn route(
-    home: &Path,
-    events: &mut Events<'_>,
-    (store, name): (&StoreName, &str),
-    folder: &str,
-    timeout: i64,
-    record: &StoreRecord,
-) -> Outcome {
-    let home = home.to_path_buf();
     let store_ref = record.store_ref()?;
     if let StoreRef::Postgres { .. } = store_ref {
-        return init_postgresql(&home, events, store, name, folder, timeout, record);
+        return init_postgresql(&home, events, store, name, folder, timeout, &record);
     }
     // Init runs where the Store's calls run (H11)
     if let Executor::Worker(worker) = place::plan(&home, store_ref)? {
@@ -179,17 +293,22 @@ fn route(
     let _lease = lease::hold(&home, store)?;
     let add = project_add(&home, store, name, folder, timeout);
     progress(events, "install", None);
-    op::phase(&home, store.as_str(), name, "install")?;
     let added = add_project(&add)?;
-    // the project's record keeps when it was made, and the Init's `op` ends
+    // the project's record keeps when it was made
     progress(events, "record", None);
     {
         let _lock = layerfs_home::home::lock::take(&home)?;
         if let Some(project) = ProjectRecord::read(&home, store, name)? {
-            project.created_now().without(FIELD).write(&home)?;
+            project.created_now().write(&home)?;
         }
     }
-    created(&home, store, name, record, &added)
+    let mut out = summary(&home, store, name, &record, View::Full);
+    for field in ["layer", "root"] {
+        if let Some(value) = added.get(field) {
+            out = layerfs_home::home::with_field(out, field, value.clone());
+        }
+    }
+    Ok(out)
 }
 
 /// What one `project.init` into a worker's Store names.
@@ -207,9 +326,9 @@ struct InitCall<'a> {
 /// copies it to the machine's worker ([`crate::project::send`]), and the
 /// worker adds the copy under its own lease and removes the copy. This process holds the Store's lease meanwhile, as for
 /// any call it sends there, then records the project in the home. One
-/// attempt per request: a lost answer is `Unknown`, and the claimed entry
-/// stays with its `op` uncertain (`project list` shows the project `broken`
-/// `unresolved`; the Store may hold it).
+/// attempt per request: a lost answer is `Unknown`, and the home gains no
+/// record (`project list` does not show a project whose outcome is not
+/// known; the Store may hold it).
 fn init_on_worker(
     home: &Path,
     events: &mut Events<'_>,
@@ -225,6 +344,9 @@ fn init_on_worker(
         folder,
         timeout,
     } = call;
+    if paths::project_record(&home, store, name).exists() {
+        return Err(crate::project::add::home_name_taken(store.as_str(), name));
+    }
     let total = send::measure(Path::new(folder), name)?;
     let copy = send::Copy {
         home: &home,
@@ -238,13 +360,6 @@ fn init_on_worker(
     send::room(&mut worker, &copy, total)?;
     // the lease is taken under the Store's lock with the record read there
     let (lease, record) = lease::claim(&home, store)?;
-    // the copy is named on the Init's `op`, so the call that settles an
-    // Init whose owner is gone (`project delete`) removes it (spec v20)
-    let left = SdkValue::map([
-        ("copy", SdkValue::text(&copy.id)),
-        ("machine", SdkValue::text(machine)),
-    ]);
-    op::phase_with(&home, store.as_str(), name, "send", left)?;
     send::send(events, &worker, &copy, total)?;
     let request = InitFrame {
         store: store.clone(),
@@ -255,7 +370,6 @@ fn init_on_worker(
     }
     .encode();
     progress(events, "install", None);
-    op::phase(&home, store.as_str(), name, "install")?;
     let sent_ms = layerfs_home::home::now_ms();
     let added = worker.call("project.init", request, &mut |event| events.event(event));
     drop(lease);
@@ -270,8 +384,9 @@ fn init_on_worker(
                 "{}; the worker removes its copy {left} when its Init ends",
                 refusal.message
             );
-            // the worker's Init removes its copy when it ends; while it runs
-            // it holds the copy, so `project delete` leaves it alone
+            // the worker's Init ends by its own deadline, counted from when
+            // it read this request, moments after this: the hour `doctor.fix`
+            // waits past the recorded deadline covers the difference
             let left = send::Left {
                 store,
                 project: name,
@@ -286,47 +401,18 @@ fn init_on_worker(
         refusal
     })?;
     let stack = added.get("stack").cloned().unwrap_or_default();
-    // the worker's `manifest` and `installed` complete the record (#749);
-    // a worker that sends none (an older build) or sends ones that are not
-    // a complete Normal pair leaves it for a move or a Sandbox create
-    // to complete from the Store file, the latter logged: the project is
-    // already in the Store, so the Init does not fail over it
-    let initialised = ProjectRecord::initialised(store, name, stack);
-    let project = match (added.get("manifest"), added.get("installed")) {
-        (None, None) => initialised,
-        (manifest, installed) => {
-            let full = (initialised.clone())
-                .with("manifest", manifest.cloned().unwrap_or_default())
-                .with("installed", installed.cloned().unwrap_or_default());
-            if crate::backup::restored::complete(&full) {
-                full
-            } else {
-                let _ = layerfs_home::home::log_line(
-                    &home,
-                    "repair.jsonl",
-                    &SdkValue::map([
-                        ("at", SdkValue::Int(layerfs_home::home::now_ms())),
-                        ("call", SdkValue::text("project.init")),
-                        ("store", SdkValue::text(store.as_str())),
-                        ("project", SdkValue::text(name)),
-                        (
-                            "message",
-                            SdkValue::text(
-                                "the worker's manifest and installed manifest are not a complete Normal pair; the record keeps neither",
-                            ),
-                        ),
-                    ]),
-                );
-                initialised
-            }
-        }
-    };
     progress(events, "record", None);
     {
         let _lock = layerfs_home::home::lock::take(&home)?;
-        project.write(&home)?;
+        ProjectRecord::initialised(store, name, stack).write(&home)?;
     }
-    created(&home, store, name, &record, &added)
+    let mut out = summary(&home, store, name, &record, View::Full);
+    for field in ["layer", "root"] {
+        if let Some(value) = added.get(field) {
+            out = layerfs_home::home::with_field(out, field, value.clone());
+        }
+    }
+    Ok(out)
 }
 
 /// `project.init` into a PostgreSQL Store (#533 step 10b): the live add
@@ -342,6 +428,10 @@ fn init_postgresql(
     record: &StoreRecord,
 ) -> Outcome {
     let home = home.to_path_buf();
+    let path = paths::project_record(&home, store, name);
+    if path.exists() {
+        return Err(crate::project::add::home_name_taken(store.as_str(), name));
+    }
     let add = PgProjectAdd {
         add: ProjectAdd {
             store_record: Some(record.to_record().clone()),
@@ -352,10 +442,15 @@ fn init_postgresql(
     // this process uses the Store meanwhile, as a sqlite Init does
     let _lease = lease::hold(&home, store)?;
     progress(events, "install", None);
-    op::phase(&home, store.as_str(), name, "install")?;
     let added = crate::project::postgres_init::add_project(&add)?;
     let stack = added.get("stack").cloned().unwrap_or_default();
     progress(events, "record", None);
     ProjectRecord::initialised(store, name, stack).write(&home)?;
-    created(&home, store, name, record, &added)
+    let mut out = summary(&home, store, name, record, View::Full);
+    for field in ["layer", "root"] {
+        if let Some(value) = added.get(field) {
+            out = layerfs_home::home::with_field(out, field, value.clone());
+        }
+    }
+    Ok(out)
 }

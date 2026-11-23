@@ -1,47 +1,33 @@
 //! Exact kernel directory owners and retained current parent relationships.
 use crate::{
-    db::integer, open::KernelParent, KernelDirectory, KernelLink, KernelMount, Overlay,
-    OverlayError, OverlayResult, ReferenceKind,
+    db::integer, KernelDirectory, KernelMount, Overlay, OverlayError, OverlayResult, ReferenceKind,
 };
 impl Overlay {
-    /// Called by the deciding lookup/mutation transaction for a directory only,
-    /// with the name that binds it in `parent` in that transaction's view.
+    /// Called by the deciding lookup/mutation transaction for a directory only.
     /// Its FK follows existing independent file custody, including open dirs.
     pub(crate) fn set_kernel_parent(
         &self,
         mount: KernelMount,
         serial: u64,
         parent: u64,
-        name: &[u8],
     ) -> OverlayResult<()> {
         integer(serial)?;
         integer(parent)?;
-        self.open.borrow_mut().parents.put(
-            serial,
-            KernelParent {
-                owner: mount.owner,
-                parent,
-                name: name.into(),
-            },
-        );
+        self.open
+            .borrow_mut()
+            .parents
+            .put(serial, (mount.owner, parent));
         Ok(())
     }
     pub(crate) fn kernel_parent(&self, mount: KernelMount, serial: u64) -> OverlayResult<u64> {
-        self.kernel_link(mount, serial).map(|link| link.parent)
-    }
-    pub(crate) fn kernel_link(&self, mount: KernelMount, serial: u64) -> OverlayResult<KernelLink> {
         self.available()?;
         self.open
             .borrow()
             .parents
             .rows
             .get(&serial)
-            .filter(|row| row.owner == mount.owner)
-            .map(|row| KernelLink {
-                serial,
-                parent: row.parent,
-                name: row.name.to_vec(),
-            })
+            .filter(|(owner, _)| *owner == mount.owner)
+            .map(|(_, parent)| *parent)
             .ok_or(OverlayError::Stale)
     }
     pub(crate) fn retain_kernel_directory(

@@ -61,7 +61,7 @@ const READ: u32 = 128 * 1024;
 fn sqlite_statement_counts() {
     let dir = scratch("sqlite");
     let config = PersistenceConfig::sqlite(dir.join("store.sqlite"))
-        .with_sqlite_profile(SqlitePersistenceProfile::Normal)
+        .with_sqlite_profile(SqlitePersistenceProfile::Disposable)
         .with_sqlite_acquisition(SqliteAcquisitionSchema::Tables);
     let handles =
         SqliteHandles::create(config.clone(), StoragePolicy::frozen_default(), &catalog()).unwrap();
@@ -70,7 +70,7 @@ fn sqlite_statement_counts() {
     drop(storage);
     let sealed = handles.seal().unwrap();
     let config = PersistenceConfig::sqlite(&sealed.path)
-        .with_sqlite_profile(SqlitePersistenceProfile::Normal);
+        .with_sqlite_profile(SqlitePersistenceProfile::Disposable);
     let session = SqliteHandles::open_read_only(config.clone(), BINDING, CURSOR).unwrap();
     let work = session.storage.diagnostics().unwrap();
     drop(session);
@@ -531,7 +531,6 @@ impl Run {
             workspace.commit_captured(&CommitOptions {
                 force: false,
                 message: Some(name.to_owned()),
-                expected: None,
             })
         });
         let reports = recording.finish();

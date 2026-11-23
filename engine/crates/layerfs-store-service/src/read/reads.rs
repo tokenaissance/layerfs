@@ -24,15 +24,13 @@ use layerfs_content::{
 pub const REPLY_BUDGET: usize = window::BYTES;
 
 /// One window of the file at `path`: lines `start` through `end`, as far as
-/// the reply budget allows. With `binary`, a file that is not text answers
-/// `binary: true` and its `size` instead of being refused `Binary`.
+/// the reply budget allows.
 pub fn read(
     reader: &StorePorts,
     snap: &Snap,
     path: &str,
     start: Arg<u64>,
     end: Arg<u64>,
-    binary: bool,
 ) -> Answer {
     // The lookup's pages are memoized over the call's caches; the file's
     // own objects are read through the caches only.
@@ -45,11 +43,9 @@ pub fn read(
     let requested_end = end;
     let end = end.min(start.saturating_add(window::LINES as u64 - 1));
     let (mut content, mut next, mut clipped) = (String::new(), None, false);
-    // a line past the asked end is the next line, but the read is whole
-    let (mut last, mut asked) = (None, false);
-    let scanned = window::lines(&cached, &entry, REPLY_BUDGET, start, |n, line| {
+    let mut last = None;
+    window::lines(&cached, &entry, REPLY_BUDGET, start, |n, line| {
         if n > requested_end {
-            (next, asked) = (Some(n), true);
             return Ok(false);
         }
         if n > end || (!content.is_empty() && content.len() + line.text.len() > REPLY_BUDGET) {
@@ -60,18 +56,7 @@ pub fn read(
         last = Some(n);
         content.push_str(&line.text);
         Ok(true)
-    });
-    match scanned {
-        Err(refusal) if binary && refusal.code == "Binary" => {
-            let mut fields = header(snap, path);
-            fields.extend([
-                ("binary", SdkValue::Bool(true)),
-                ("size", SdkValue::Int(size(reader, &entry)? as i64)),
-            ]);
-            return answer(fields);
-        }
-        other => other?,
-    }
+    })?;
     // Return either aggregate text or per-line data, avoiding duplicate payload on the wire.
     let mut fields = header(snap, path);
     fields.extend([
@@ -82,10 +67,7 @@ pub fn read(
             last.map_or(SdkValue::Null, |n| SdkValue::Int(n as i64)),
         ),
         ("lineTruncated", SdkValue::Bool(clipped)),
-        (
-            "truncated",
-            SdkValue::Bool(clipped || (next.is_some() && !asked)),
-        ),
+        ("truncated", SdkValue::Bool(clipped || next.is_some())),
         (
             "nextLine",
             next.map_or(SdkValue::Null, |n| SdkValue::Int(n as i64)),
@@ -95,8 +77,8 @@ pub fn read(
     answer(fields)
 }
 
-/// The type, inode, size, permission mode and modification time of the
-/// entry at `path`. An inline mode costs no object read.
+/// The type, inode, size and permission mode of the entry at `path`. An
+/// inline mode costs no object read.
 pub fn stat(reader: &StorePorts, snap: &Snap, path: &str) -> Answer {
     let cached = Cached::new(reader)?;
     let entry = existing(&Memo::new(&cached), snap, path)?;
@@ -113,13 +95,6 @@ pub fn stat(reader: &StorePorts, snap: &Snap, path: &str) -> Answer {
         ("inode", SdkValue::Int(entry.serial as i64)),
         ("size", SdkValue::Int(size(reader, &entry)? as i64)),
         ("mode", SdkValue::Int(i64::from(metadata.mode))),
-        (
-            "modifiedMs",
-            SdkValue::Int(
-                metadata.mtime_seconds.saturating_mul(1000)
-                    + i64::from(metadata.mtime_nanoseconds / 1_000_000),
-            ),
-        ),
     ]);
     answer(fields)
 }
@@ -213,16 +188,13 @@ pub fn list(
 }
 
 /// One page of the lines under `path` that contain `pattern`, a nonempty
-/// literal the caller checked, in the files `filters` leave in; binary
-/// files are skipped and counted.
-#[allow(clippy::too_many_arguments)]
+/// literal the caller checked; binary files are skipped and counted.
 pub fn grep(
     reader: &StorePorts,
     snap: &Snap,
     pattern: &str,
     path: &str,
     seen: &Visibility,
-    filters: &search::Filters,
     limit: usize,
     pos: u64,
 ) -> Answer {
@@ -235,19 +207,14 @@ pub fn grep(
         spent: 0,
         more: false,
         skipped: 0,
-        fold: filters.fold,
     };
     let mut reuse = search::Reuse::default();
     // The walk and the file scans share one call's read caches; files are
     // scanned in walk order, a window of them at a time.
     let cached = Cached::new(reader)?;
     let mut window = Vec::new();
-    let excluded = |file: &str| filters.excluded(file);
-    walk::walk_excluding(&cached, snap, path, None, excluded, |file, entry| {
-        if entry.value.kind == InodeKind::RegularFile
-            && seen.hidden(file).is_none()
-            && filters.included(file)
-        {
+    walk::walk_within(&cached, snap, path, None, |file, entry| {
+        if entry.value.kind == InodeKind::RegularFile && seen.hidden(file).is_none() {
             window.push((file.to_owned(), entry));
         }
         if window.len() == cached::ROOTS {
@@ -285,7 +252,6 @@ struct Page<'p> {
     spent: usize,
     more: bool,
     skipped: i64,
-    fold: bool,
 }
 
 impl Page<'_> {
@@ -305,13 +271,13 @@ impl Page<'_> {
         ids.sort_unstable();
         ids.dedup();
         let mut views = cached.roots(&ids)?;
-        let (pattern, fold) = (self.pattern, self.fold);
+        let pattern = self.pattern;
         for (file, entry) in window.drain(..) {
             if self.more {
                 continue;
             }
             let view = views.remove(&entry.value.content_root);
-            let scan = reuse.matches(cached, &entry, view, 1024, pattern, fold, |n, line| {
+            let scan = reuse.matches(cached, &entry, view, 1024, pattern, |n, line| {
                 Ok(self.line(&file, n, line))
             });
             match scan {
@@ -344,16 +310,13 @@ impl Page<'_> {
     }
 }
 
-/// One page of the paths under `path` that match the glob `pattern` and
-/// that `filters` do not leave out.
-#[allow(clippy::too_many_arguments)]
+/// One page of the paths under `path` that match the glob `pattern`.
 pub fn glob(
     reader: &StorePorts,
     snap: &Snap,
     pattern: &str,
     path: &str,
     seen: &Visibility,
-    filters: &search::Filters,
     limit: usize,
     pos: u64,
 ) -> Answer {
@@ -362,8 +325,7 @@ pub fn glob(
     // Only the folders the pattern's literal leading folders allow.
     let cached = Cached::new(reader)?;
     let within = walk::leading(pattern);
-    let excluded = |file: &str| filters.excluded(file);
-    walk::walk_excluding(&cached, snap, path, within, excluded, |file, _| {
+    walk::walk_within(&cached, snap, path, within, |file, _| {
         if seen.hidden(file).is_some() {
             return Ok(true);
         }

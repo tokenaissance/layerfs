@@ -16,7 +16,7 @@ use layerfs_content::{
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Normal directory removed when it is dropped.
+/// Disposable directory removed when it is dropped.
 pub struct TempDir {
     path: PathBuf,
 }

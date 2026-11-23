@@ -45,7 +45,6 @@ fn fixture() -> Fixture {
             second_parent: None,
             force: false,
             meta,
-            required_head: None,
         })
         .unwrap();
     f

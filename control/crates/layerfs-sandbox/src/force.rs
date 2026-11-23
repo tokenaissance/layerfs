@@ -23,7 +23,10 @@ pub fn native_host(home: &Path, sandbox: &str) -> Result<Host, SdkRefusal> {
         store_path: None,
         deploy: Some(Deploy {
             local_dir: Some(paths::run_root(home).display().to_string()),
+            // a Sandbox made before layerfs-project#180 is found by the
+            // earlier prefix its record keeps
             container_prefix: Some(layerfs_home::names::provider_prefix(&id)),
+            legacy_prefix: Some(layerfs_home::names::legacy_provider_prefix(&id)),
             ..Deploy::default()
         }),
         postgresql: None,
@@ -48,17 +51,13 @@ pub fn native_free(home: &Path) -> Result<(), SdkRefusal> {
     }
 }
 
-/// Forced `sandbox.remove` of the Sandbox `host` names, on this process's
+/// Forced `sandbox.close` of the Sandbox `host` names, on this process's
 /// kernel: no daemon control call, Store open, active-Workspace refusal or
 /// retry. Its running commands are cancelled first, as every forced close
 /// does (`crate::exec::cancel::settle`). The backend's Stop checks the runtime identity and ends its
 /// mounts and processes; its Delete independently checks the physical
 /// detach before the runtime goes. Answers each recorded or `held`
 /// Workspace as `unknown`: its uncommitted changes end with the Sandbox.
-/// Once the runtime is stopped, each Workspace's mount intent is ended
-/// once (`crate::mount_intents`); one it could not end is in `left`.
-/// A record this build does not read never reaches it: `sandbox.remove`
-/// forgets it first (`crate::reopen::unread`).
 pub fn close(host: &Host, held: &[String]) -> Outcome {
     let id = host.sandbox()?.to_owned();
     let directory = crate::files::sandbox_dir(host)?;
@@ -93,13 +92,18 @@ pub fn close(host: &Host, held: &[String]) -> Outcome {
         .map_err(after_stop)?
         .stopped()
         .delete()
-        .map_err(|error| after_stop(crate::daemon::values::wire(error)))?;
+        .map_err(|error| after_stop(failed(error)))?;
     // their owner is stopped: each Workspace's mount intent is ended once
     let record = crate::record::SandboxRecord::read(&host.home, &id).map_err(after_stop)?;
     let open = match &record {
         Some(record) => crate::mount_intents::store_of(&host.home, record),
         None => Err(format!("no Sandbox {id} is recorded")),
     };
+    // the runtime is confirmed stopped: write the durable home tombstone
+    // before the record (the folder) goes; a failed write keeps the record
+    if let Some(record) = &record {
+        crate::record::retire(&host.home, record).map_err(after_stop)?;
+    }
     let left = crate::mount_intents::end(open.as_ref().map_err(String::as_str), &bound);
     // the table is whole after a holder's panic (layerfs-project#177)
     crate::registry::SANDBOXES
@@ -107,7 +111,6 @@ pub fn close(host: &Host, held: &[String]) -> Outcome {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(&directory);
     std::fs::remove_dir_all(&directory).map_err(|error| after_stop(failed(error)))?;
-    layerfs_home::home::generation::moved_above(&directory);
     Ok(SdkValue::map([
         ("kind", SdkValue::text("Closed")),
         ("sandbox", SdkValue::text(id)),

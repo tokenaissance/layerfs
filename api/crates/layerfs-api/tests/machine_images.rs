@@ -14,7 +14,6 @@ fn stopped_machine_images_is_unavailable_and_preserves_state() {
         SdkValue::map([
             ("name", SdkValue::text("image-test")),
             ("platform", SdkValue::text("lima")),
-            ("vm_name", SdkValue::text("layerfs-00000000-image-test")),
             ("state", SdkValue::text("stopped")),
         ]),
     );
@@ -23,7 +22,7 @@ fn stopped_machine_images_is_unavailable_and_preserves_state() {
     let error = call(
         Some(&home),
         "machine.images",
-        SdkValue::map([("machine", SdkValue::text("image-test"))]),
+        SdkValue::map([("name", SdkValue::text("image-test"))]),
         &mut |_| {},
     )
     .unwrap_err();

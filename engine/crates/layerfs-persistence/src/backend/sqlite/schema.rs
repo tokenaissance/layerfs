@@ -18,6 +18,7 @@ pub(crate) const DIGESTS: &str = include_str!("../../../sql/sqlite/file_digest.s
 /// GC markers, positions and admission records; a Store written before them
 /// gains them at open.
 pub(crate) const GC: &str = include_str!("../../../sql/sqlite/gc.sql");
+
 /// The position columns T1.2a/T1.4 append, as `("table", "column", ALTER)`;
 /// a Store written before them gains them at open.
 pub(crate) const POSITION_COLUMNS: [(&str, &str, &str); 4] = [
@@ -45,7 +46,7 @@ pub(crate) const POSITION_COLUMNS: [(&str, &str, &str); 4] = [
 const UNIT_INDEX: &str = include_str!("../../../sql/sqlite/objects_units_index.sql");
 const UNITS: &str = include_str!("../../../sql/sqlite/objects_units.sql");
 const ACQUISITION: &str = include_str!("../../../sql/sqlite/acquisition/schema.sql");
-type Selection = (crate::SqlitePackLayout, crate::SqliteAcquisitionSchema);
+pub(crate) type Selection = (crate::SqlitePackLayout, crate::SqliteAcquisitionSchema);
 pub(super) fn scripts((layout, acquisition): Selection) -> Vec<String> {
     let objects = match layout {
         crate::SqlitePackLayout::Monolithic => OBJECTS.to_owned(),
@@ -122,6 +123,8 @@ fn binding_hint_table() -> &'static str {
         + 2;
     &HISTORY[start..end]
 }
+
+
 
 /// The query that returns a row when table `name` exists.
 fn has_table(name: &str) -> String {
@@ -339,13 +342,9 @@ pub(crate) fn check(
         expected.push("pack_unit");
     }
     if acquisition == crate::SqliteAcquisitionSchema::Tables {
-        // `sqlite_sequence` is the engine's never-reused operation identity counter.
-        expected.extend([
-            "init_entry",
-            "init_host_file",
-            "init_operation",
-            "sqlite_sequence",
-        ]);
+        expected.extend(["init_entry", "init_host_file", "init_operation"]);
+        // Init's AUTOINCREMENT operation identity creates `sqlite_sequence`.
+        expected.push("sqlite_sequence");
     }
     expected.sort_unstable();
     if actual != expected {
@@ -503,16 +502,19 @@ impl super::session::connection::Session {
             |tx| tx.bootstrap(GC),
         )
     }
+
     /// Adds the `kept_node` history-closure table (T7.1) to a Store written
-    /// before it, with or without the T1.4 next-serial column. The table is
-    /// empty until a mark writes it.
+    /// before it, with or without the T1.4 next-serial column. A Store an
+    /// earlier step of this same open brought forward (the authority
+    /// migration) recorded the current source before this table exists, so
+    /// that source is accepted too. The table is empty until a mark writes it.
     pub(crate) fn add_kept_node(&self) -> Result<(), BackendError> {
         self.migrate(
             &has_table("kept_node"),
             |current| {
                 let without = current.replacen(kept_node_table(), "", 1);
                 let earlier = without.replacen(next_history_serial_column(), "", 1);
-                (vec![earlier, without], current)
+                (vec![earlier, without, current.clone()], current)
             },
             |tx| tx.bootstrap(kept_node_table()),
         )
@@ -535,28 +537,6 @@ impl super::session::connection::Session {
                 backfill_position_state(tx)
             },
         )
-    }
-    /// Whether the file records the Store identity `catalog_id` and
-    /// `binding`, read alone, without the schema checks: a doctor tells a
-    /// file of another Store from one with another schema by it.
-    pub(crate) fn identity_matches(
-        &self,
-        catalog_id: layerfs_history::CatalogId,
-        binding: &[u8],
-    ) -> Result<bool, BackendError> {
-        self.run::<_, BackendError>(false, |tx| {
-            let rows = tx.query(
-                "SELECT catalog_id,binding_key FROM history_meta WHERE id=1",
-                vec![],
-            )?;
-            let row = (rows.first())
-                .filter(|_| rows.len() == 1)
-                .ok_or(BackendError::Integrity)?;
-            Ok(
-                row.get::<Vec<u8>>(0)? == catalog_id.as_slice()
-                    && row.get::<Vec<u8>>(1)? == binding,
-            )
-        })
     }
     pub(crate) fn validate(
         &self,

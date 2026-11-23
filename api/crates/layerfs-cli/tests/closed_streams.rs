@@ -31,11 +31,11 @@ fn a_stdout_that_cannot_be_written_exits_125_without_panicking() {
     for (what, words) in [
         ("store list", &["store", "list"][..]),
         ("store list --text", &["store", "list", "--text"]),
-        ("home doctor", &["home", "doctor"]),
+        ("doctor", &["doctor"]),
         ("help", &["help"]),
         ("help family", &["help", "store"]),
         ("help call", &["help", "store", "get"]),
-        ("help machine doctor", &["help", "machine", "doctor"]),
+        ("help doctor", &["help", "doctor"]),
         ("--version", &["--version"]),
     ] {
         for (sink, stdout) in failing_sinks(what) {

@@ -1,7 +1,7 @@
 //! `branch.publish` refuses a publication that would drop a Layer main gained
 //! since the Branch forked (#691): main must still be the fork point, or its
-//! head must be this Branch's own earlier publication. The caller may pin
-//! main's head it read (`expected`). A refused publish writes nothing, leaves main
+//! head must be this Branch's own earlier publication. The caller may pin the
+//! base and the head it read. A refused publish writes nothing, leaves main
 //! and the Branch alone, and `force` keeps the old overwrite-only behavior. A
 //! merged Branch still fast-forwards, and a Branch may publish again over its
 //! own Layer. A Commit already published stays `UpToDate` and a tree main
@@ -85,7 +85,7 @@ fn a_stale_base_publish_is_refused_and_main_is_unchanged() {
     assert!(
         refusal
             .message
-            .contains("merge main into feat-b and publish again"),
+            .contains("merge feat-b with main into a new Branch"),
         "the refusal says how to recover: {}",
         refusal.message
     );
@@ -125,6 +125,7 @@ fn matching_expectations_publish_and_wrong_ones_are_refused() {
     let fixture = two_branches("publish-expected-base");
     let a = fixture.call("branch.publish", vec![("branch", SdkValue::text("feat-a"))]);
     let a_layer = published_field(&a, "id");
+    let b_head = branch_field(&fixture, "feat-b", "head").expect("feat-b's head");
 
     // C forks after A published, so its base is main's current head.
     fixture.fork("feat-c");
@@ -137,8 +138,8 @@ fn matching_expectations_publish_and_wrong_ones_are_refused() {
         "branch.publish",
         vec![
             ("branch", SdkValue::text("feat-c")),
-            ("expected", SdkValue::text(c_base.as_str())),
-            ("at", SdkValue::text(c_head.as_str())),
+            ("expectedBase", SdkValue::text(c_base.as_str())),
+            ("expectedHead", SdkValue::text(c_head.as_str())),
         ],
     );
     assert_eq!(published.get_text("kind"), Some("Added"));
@@ -157,7 +158,7 @@ fn matching_expectations_publish_and_wrong_ones_are_refused() {
             "branch.publish",
             vec![
                 ("branch", SdkValue::text("feat-d")),
-                ("expected", SdkValue::text(a_layer.as_str())),
+                ("expectedBase", SdkValue::text(a_layer.as_str())),
             ],
         )
         .expect_err("a stale expected base is refused");
@@ -170,8 +171,26 @@ fn matching_expectations_publish_and_wrong_ones_are_refused() {
         moved_base.detail.get_text("actualBase"),
         Some(d_base.as_str())
     );
-    // the refusal names main's head for the caller's next call
-    assert_eq!(moved_base.detail.get_text("head"), Some(d_base.as_str()));
+
+    let moved_head = fixture
+        .try_call(
+            "branch.publish",
+            vec![
+                ("branch", SdkValue::text("feat-d")),
+                ("expectedBase", SdkValue::text(d_base.as_str())),
+                ("expectedHead", SdkValue::text(b_head.as_str())),
+            ],
+        )
+        .expect_err("a wrong expected head is refused");
+    assert_eq!(moved_head.code, "HeadMoved");
+    assert_eq!(
+        moved_head.detail.get_text("expectedHead"),
+        Some(b_head.as_str())
+    );
+    assert_eq!(
+        moved_head.detail.get_text("actualHead"),
+        Some(d_head.as_str())
+    );
 
     // Neither refusal published anything: main is still C's Layer.
     assert_eq!(main_head(&fixture), c_layer);
@@ -180,13 +199,13 @@ fn matching_expectations_publish_and_wrong_ones_are_refused() {
         Some(d_head.as_str())
     );
 
-    // main's head and the Commit the caller read publish as a fast-forward.
+    // The exact base and head the caller read publish as a fast-forward.
     let d = fixture.call(
         "branch.publish",
         vec![
             ("branch", SdkValue::text("feat-d")),
-            ("expected", SdkValue::text(d_base.as_str())),
-            ("at", SdkValue::text(d_head.as_str())),
+            ("expectedBase", SdkValue::text(d_base.as_str())),
+            ("expectedHead", SdkValue::text(d_head.as_str())),
         ],
     );
     assert_eq!(d.get_text("kind"), Some("Added"));
@@ -249,7 +268,7 @@ fn publishing_a_merged_branch_is_a_fast_forward() {
         "branch.publish",
         vec![
             ("branch", SdkValue::text("merged")),
-            ("expected", SdkValue::text(merged_base.as_str())),
+            ("expectedBase", SdkValue::text(merged_base.as_str())),
         ],
     );
     assert_eq!(published.get_text("kind"), Some("Added"));
@@ -309,7 +328,7 @@ fn a_repeated_publish_after_main_moved_is_up_to_date() {
         "branch.publish",
         vec![
             ("branch", SdkValue::text("feat-a")),
-            ("expected", SdkValue::text(a_base.as_str())),
+            ("expectedBase", SdkValue::text(a_base.as_str())),
         ],
     );
     assert_eq!(pinned.get_text("kind"), Some("UpToDate"));
@@ -346,18 +365,45 @@ fn a_tree_main_already_holds_is_no_changes() {
     fixture.cleanup();
 }
 
+#[test]
+fn expected_head_is_the_branch_head_even_with_a_named_commit() {
+    let fixture = two_branches("publish-expected-head-named");
+    let b_head = branch_field(&fixture, "feat-b", "head").expect("feat-b's head");
+    fixture.apply("feat-b", vec![write("/b2.txt", "B again\n")]);
+    let b_now = branch_field(&fixture, "feat-b", "head").expect("feat-b's new head");
+    // The caller names the Commit it read and expects it to be the head; the
+    // refusal reports the Branch's real head, not the named Commit.
+    let refusal = fixture
+        .try_call(
+            "branch.publish",
+            vec![
+                ("branch", SdkValue::text("feat-b")),
+                ("commit", SdkValue::text(b_head.as_str())),
+                ("expectedHead", SdkValue::text(b_head.as_str())),
+            ],
+        )
+        .expect_err("the Branch head moved past the expected Commit");
+    assert_eq!(refusal.code, "HeadMoved");
+    assert_eq!(
+        refusal.detail.get_text("expectedHead"),
+        Some(b_head.as_str())
+    );
+    assert_eq!(refusal.detail.get_text("actualHead"), Some(b_now.as_str()));
+    fixture.cleanup();
+}
+
 /// main's published Layers, newest first.
 fn main_layers(fixture: &Fixture) -> Vec<String> {
     let page = fixture.call(
         "branch.list_commits",
         vec![
             ("branch", SdkValue::text("main")),
-            ("limit", SdkValue::Int(100)),
+            ("pageSize", SdkValue::Int(100)),
         ],
     );
     support::items(&page)
         .iter()
-        .map(|item| item.get_text("commit").expect("a Layer id").to_owned())
+        .map(|item| item.get_text("id").expect("a Layer id").to_owned())
         .collect()
 }
 
@@ -398,8 +444,8 @@ fn two_threads_publishing_one_expected_base_race_cleanly() {
                 "branch.publish",
                 vec![
                     ("branch", SdkValue::text(branch)),
-                    ("expected", SdkValue::text(base.as_str())),
-                    ("at", SdkValue::text(head)),
+                    ("expectedBase", SdkValue::text(base.as_str())),
+                    ("expectedHead", SdkValue::text(head)),
                 ],
             )
         };

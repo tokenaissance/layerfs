@@ -2,7 +2,7 @@
 //! daemon is needed. The installed file opens as every Store opener opens
 //! it, a second install into the same place is refused before anything is
 //! written, and an already installed manifest is refused.
-use layerfs_control::{InitRequest, ProjectApi, SealedProject};
+use layerfs_api::{InitRequest, ProjectApi, SealedProject};
 use layerfs_history::{BranchId, HistoryCatalogConfig, HistoryName, LayerStackId};
 use layerfs_persistence::{PersistenceConfig, SqlitePersistenceProfile};
 use layerfs_storage::StoragePolicy;
@@ -29,7 +29,7 @@ fn sealed(directory: &Path) -> SealedProject {
     let request = InitRequest {
         source: directory.join("source"),
         store: PersistenceConfig::sqlite(directory.join("sealed.sqlite"))
-            .with_sqlite_profile(SqlitePersistenceProfile::Normal),
+            .with_sqlite_profile(SqlitePersistenceProfile::Disposable),
         locator: "/layerfs-store/global/store.sqlite".into(),
         policy: StoragePolicy::frozen_default(),
         catalog: HistoryCatalogConfig {

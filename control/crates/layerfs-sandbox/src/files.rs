@@ -10,7 +10,6 @@ use crate::registry::{Mount, SandboxState};
 use crate::reopen::{gone, recorded};
 #[cfg(target_os = "linux")]
 use crate::runtime::NAMESPACES;
-#[cfg(target_os = "macos")]
 use crate::runtime::{LOCAL, NATIVE};
 use crate::{internal::workspace, BoundWorkspace, MountedWorkspace};
 use layerfs_bridge::control::{SdkRefusal, SdkValue};
@@ -67,7 +66,7 @@ pub fn save_sandbox(
     let platform = platform.to_owned();
     let runtime = state.runtime()?;
     let daemon = match runtime {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         Sandbox::HostProcess(runtime) => {
             let record = runtime
                 .local_record()
@@ -114,7 +113,7 @@ pub fn save_sandbox(
 /// native (macOS) one, FUSE for every other.
 pub fn route(runtime: &Sandbox) -> &'static str {
     match runtime {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         Sandbox::HostProcess(_) => "nfs",
         #[cfg(target_os = "linux")]
         Sandbox::Namespaces(_) => "fuse",
@@ -178,7 +177,7 @@ pub fn reopen(host: &Host) -> Result<Arc<SandboxState>> {
         }
         None => {
             let runtime = observed(host, id, &value)?;
-            let endpoint = runtime.endpoint().map_err(crate::daemon::values::wire)?;
+            let endpoint = runtime.endpoint().map_err(failed)?;
             (Some(runtime), endpoint)
         }
     };
@@ -214,7 +213,7 @@ fn observed(host: &Host, id: &str, value: &DaemonRecord) -> Result<Box<Sandbox>>
         if failure.container_stopped() {
             gone(id, container, true)
         } else {
-            crate::daemon::values::wire(failure)
+            failed(failure)
         }
     })
 }
@@ -262,13 +261,16 @@ pub fn refresh_except_within(
         }
         let token = token_of(&value)?;
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        let status = match workspace(&mut *state.controls.lend_within(remaining)?).status(token) {
+        let status = match workspace(&mut *crate::daemon::trace::control_within(
+            &state.controls,
+            remaining,
+        )?)
+        .status(token)
+        {
             Ok(status) => status,
             // Unmounted by the daemon; its owner removes the record next.
             Err(failure) if absent(&failure) => continue,
-            // its refusal, never the raw failure (an unreadable answer
-            // from a daemon of another build is a public refusal with a fix)
-            Err(failure) => return Err(crate::daemon::values::failure(failure)),
+            Err(failure) => return Err(failed(failure)),
         };
         let ready = status
             .kernel

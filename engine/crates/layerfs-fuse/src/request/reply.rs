@@ -84,7 +84,7 @@ impl ReadReply {
                 RequestDisposition::Complete
             }
             Err(error) => {
-                reply.error(terminal::errno(error.fenced(), error.stale()));
+                reply.error(terminal::errno(error.fenced()));
                 terminal::read(&fence, error).await
             }
         }
@@ -108,7 +108,7 @@ impl ReadReply {
             {
                 Ok(answer) => answer,
                 Err(error) => {
-                    self.error(terminal::errno(error.fenced(), error.stale()));
+                    self.error(terminal::errno(error.fenced()));
                     return terminal::read(&fence, error).await;
                 }
             };

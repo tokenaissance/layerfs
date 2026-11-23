@@ -1,28 +1,11 @@
 //! `workspace.mount`: mount a Branch in a Sandbox.
-use crate::calls::scope::Rule;
 use crate::calls::table::Kind::Name;
 use crate::calls::table::{a, call, opt, Call};
-use crate::calls::{Context, Form, Policy};
+use crate::calls::Context;
 use layerfs_bridge::control::SdkValue;
+use layerfs_home::home::with_field;
 use layerfs_home::outcome::Outcome;
-use layerfs_sandbox::workspace::answers::mounted;
 use layerfs_sandbox::workspace::calls::{mount, MountRequest};
-
-const FORM: Form = Form::of(
-    &["workspace", "path"],
-    &[],
-    &[
-        "workspace",
-        "path",
-        "outcome",
-        "branch",
-        "commit",
-        "base_layer",
-        "root",
-        "id",
-        "namespace",
-    ],
-);
 
 /// Its table entry.
 pub(crate) const CALL: Call = call(
@@ -32,13 +15,9 @@ pub(crate) const CALL: Call = call(
     &[opt("name", Name)],
     "mount a Branch in a Sandbox",
     run,
-)
-.form(&FORM)
-.scoped(Rule::WorkspaceMount)
-.policy(Policy::Sandbox("sandbox"));
+);
 
-/// Runs `workspace.mount`: the handle `<sandbox>:<name>`, the name the
-/// Branch's own made valid when none is given.
+/// Runs `workspace.mount`: its side's answer with the Workspace's `ws`.
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
     let text = |name: &str| args.get_text(name).map(str::to_owned);
     let request = MountRequest {
@@ -47,5 +26,6 @@ fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
         name: text("name"),
     };
     let (home, events) = context.parts();
-    Ok(mounted(&mount(home, events, &request)?))
+    let mounted = mount(home, events, &request)?;
+    Ok(with_field(mounted.answer, "ws", SdkValue::Text(mounted.ws)))
 }

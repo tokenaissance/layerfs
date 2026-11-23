@@ -46,7 +46,7 @@ impl PostgresStorage {
         state.work.round_trips += 1;
         let alive = state.client.is_valid(std::time::Duration::from_secs(5));
         if alive.is_err() {
-            state.quarantine();
+            state.quarantined = true;
         }
         alive.is_ok()
     }

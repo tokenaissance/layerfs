@@ -275,29 +275,13 @@ pub fn project(home: Option<&Path>, store: Option<&str>, name: Option<&str>) -> 
     let path = project_dir(home, store, name)?;
     let value = layerfs_home::home::read_record(&path.join("record.json"))?
         .ok_or_else(|| refused("NoSuchProject", "no project record"))?;
-    decoded(&path, &value)
-}
-
-/// [`project`] from its record `value`, already in hand (a record a repair
-/// just wrote, #749), with no second read of its entry.
-pub fn project_of(
-    home: Option<&Path>,
-    store: Option<&str>,
-    name: Option<&str>,
-    value: &SdkValue,
-) -> Result<Project> {
-    decoded(&project_dir(home, store, name)?, value)
-}
-
-/// The project whose entry is `path` and whose record is `value`.
-fn decoded(path: &Path, value: &SdkValue) -> Result<Project> {
     let decode = |name| match value.get(name) {
         Some(SdkValue::Bytes(bytes)) => StoreManifest::decode(bytes).map_err(failed),
         _ => Err(refused("NoSuchProject", "no complete project manifest")),
     };
     let manifest = decode("manifest")?;
-    if manifest.profile != layerfs_bridge::provision::StoreProfile::Normal {
-        return Err(refused("InvalidInput", "Normal required"));
+    if manifest.profile != layerfs_bridge::provision::StoreProfile::Disposable {
+        return Err(refused("InvalidInput", "Disposable required"));
     }
     let installed = if matches!(value.get("installed"), Some(SdkValue::Bytes(_))) {
         Some(decode("installed")?)

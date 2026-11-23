@@ -113,25 +113,6 @@ impl HistoryCatalog for HistoryProvider {
         })
     }
 
-    fn branches_from(
-        &self,
-        stack: LayerStackId,
-        from: &str,
-        inclusive: bool,
-        limit: u16,
-    ) -> HistoryResult<Vec<BranchRecord>> {
-        self.read(|tx| branch::branches_from(tx, stack, from, inclusive, limit))
-    }
-
-    fn nodes_between(
-        &self,
-        stack: LayerStackId,
-        low: &[u8; 33],
-        high: &[u8; 33],
-    ) -> HistoryResult<(Option<NodeId>, u64)> {
-        self.read(|tx| super::identity_range::nodes_between(tx, stack, low, high))
-    }
-
     // One statement each (#95): a Commit's `logical.known` reads one row.
     fn commit(&self, id: CommitId) -> HistoryResult<Option<CommitRecord>> {
         self.read_statement(|tx| commit::commit(tx, id))
@@ -242,11 +223,7 @@ impl HistoryCatalog for HistoryProvider {
     }
 
     fn merge_branch(&self, request: &BranchMergeRequest) -> HistoryResult<BranchSnapshot> {
-        self.write(|tx| merge::merge_branch(tx, request, merge::Into::New))
-    }
-
-    fn merge_into_branch(&self, request: &BranchMergeRequest) -> HistoryResult<BranchSnapshot> {
-        self.write(|tx| merge::merge_branch(tx, request, merge::Into::Existing))
+        self.write(|tx| merge::merge_branch(tx, request))
     }
 
     fn mark_branch_removed(&self, branch: BranchId, removed_ms: i64) -> HistoryResult<()> {
@@ -310,9 +287,28 @@ impl HistoryCatalog for HistoryProvider {
         super::admission::release(self, op_id)
     }
 
+    fn gc_release_fenced(&self, op_id: &[u8; 16], fence_token: Option<&str>) -> HistoryResult<()> {
+        super::admission::release_fenced(self, op_id, fence_token)
+    }
+
+    fn gc_release_done(&self, op_id: &[u8; 16], evidence: &str) -> HistoryResult<bool> {
+        super::admission::release_done(self, op_id, evidence)
+    }
+
+    fn gc_renew_lease(
+        &self,
+        op_id: &[u8; 16],
+        fence_token: Option<&str>,
+        lease_expires_ms: i64,
+    ) -> HistoryResult<bool> {
+        super::admission::renew_lease(self, op_id, fence_token, lease_expires_ms)
+    }
+
     fn gc_mark_uncertain(&self, op_id: &[u8; 16]) -> HistoryResult<()> {
         super::admission::mark_uncertain(self, op_id)
     }
+
+
 
     fn gc_remove_branch(
         &self,
@@ -343,4 +339,21 @@ impl HistoryCatalog for HistoryProvider {
     fn gc_intents(&self, scope_kind: GcScopeKind, scope_id: &[u8]) -> HistoryResult<Vec<GcIntent>> {
         super::admission::intents(self, scope_kind, scope_id)
     }
+
+    fn gc_done_intents(&self, page: u32, limit: u32) -> HistoryResult<GcAuditPage> {
+        super::admission::done_intents(self, page, limit)
+    }
+
+    fn gc_record_done(&self, intent: &GcIntent, evidence: &str) -> HistoryResult<bool> {
+        super::admission::record_done(self, intent, evidence)
+    }
+
+    fn gc_prune_done(&self, op_ids: &[[u8; 16]]) -> HistoryResult<u64> {
+        super::admission::prune_done(self, op_ids)
+    }
+
+    fn gc_reconcile_machine(&self, machine: &str, incarnation: &str) -> HistoryResult<GcReconcile> {
+        super::admission::reconcile_machine(self, machine, incarnation)
+    }
+
 }

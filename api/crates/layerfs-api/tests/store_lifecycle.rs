@@ -1,14 +1,12 @@
 //! Store lifecycle races and machines (#533 review, group store; #536
-//! §7.1, §7.3; call surface 2.0): a lease and a move or remove never
-//! overlap, even inside the mover's own process; a live `op` refuses
-//! `Busy`, a gone process's uncertain one `Unresolved` until a new move or
-//! `store remove` clears it, its certain one nothing; `store.get` shows the
-//! state from the records (`busy` with its `op`, `broken` `unresolved` with
-//! the call that clears it, `blocked` by a stopped machine) and starts no
-//! machine; `store.remove` refuses a Store whose machine is unknown and
-//! never starts a machine under the home lock; a move refuses the wrong
-//! side and a stopped machine, naming `machine start`. All from records:
-//! no Store is opened, so these run on any host.
+//! §7.1, §7.3): a lease and a push or remove never overlap, even inside the
+//! pusher's own process; a live `op` refuses `Busy`, a gone process's
+//! uncertain one `Unresolved` until a new push or `store remove` clears it, its certain
+//! one nothing; `store.status` shows the `op` and starts no machine;
+//! `store.remove` refuses a Store whose machine is unknown and never starts
+//! a machine under the home lock; push and pull refuse the wrong side and
+//! a stopped machine, naming `machine start`. All from records: no Store is opened, so
+//! these run on any host.
 use layerfs_api::home::lease;
 use layerfs_api::home::{self, paths, read_record, write_record};
 use layerfs_bridge::control::SdkValue;
@@ -43,17 +41,10 @@ fn call(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> Result<SdkValue, 
     layerfs_api::call(Some(home), name, args, &mut |_| {}).map_err(|r| (r.code, r.message))
 }
 
-/// Machine `name`'s record; one that is not `running` is stopped.
-fn machine(home: &Path, name: &str, platform: &str, state: Option<&str>) {
-    let mut fields = vec![("name", t(name)), ("platform", t(platform))];
-    // every 2.0 create records its provider name; `native` has none
-    let vm_name = format!("layerfs-test-{name}");
-    fields.extend((platform != "native").then(|| ("vm_name", t(&vm_name))));
-    fields.extend(state.map(|state| ("state", t(state))));
-    let fields = fields.into_iter().map(|(k, v)| (k.to_owned(), v));
+fn machine(home: &Path, name: &str, platform: &str) {
     write_record(
         &paths::machine_record(home, name),
-        &SdkValue::Map(fields.collect()),
+        &SdkValue::map([("name", t(name)), ("platform", t(platform))]),
     )
     .unwrap();
 }
@@ -63,8 +54,8 @@ fn machine(home: &Path, name: &str, platform: &str, state: Option<&str>) {
 fn home_with_shop() -> (PathBuf, PathBuf) {
     let home = tempdir("home");
     home::open(&home).unwrap();
-    machine(&home, "native", "native", Some("running"));
-    machine(&home, "box", "lima", Some("running"));
+    machine(&home, "native", "native");
+    machine(&home, "box", "lima");
     let root = tempdir("guest");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
@@ -95,13 +86,13 @@ fn set_op(home: &Path, value: SdkValue) {
     write_record(&path, &home::with_field(record(home), "op", value)).unwrap();
 }
 
-/// A `store.move` intent of this process, its start time moved by `skew`
+/// A `store.push` intent of this process, its start time moved by `skew`
 /// (a moved start time names a process that is gone).
 fn this_process_pushing(skew: u64, uncertain: bool) -> SdkValue {
     let me = LocalProcess::observe(std::process::id()).unwrap();
     SdkValue::map([
         ("id", t("op-00000000000000ab")),
-        ("name", t("store.move")),
+        ("name", t("store.push")),
         ("phase", t("record")),
         (
             "args",
@@ -140,13 +131,13 @@ fn a_store_call_during_a_push_is_busy_even_from_the_pushers_process() {
     set_op(&home, this_process_pushing(0, false));
     let (code, message) = read(&home).unwrap_err();
     assert_eq!(code, "Busy", "{message}");
-    assert!(message.contains("store.move"), "{message}");
+    assert!(message.contains("store.push"), "{message}");
     assert_eq!(
         lease::hold(&home, "shop").err().map(|r| r.code).as_deref(),
         Some("Busy")
     );
     assert_eq!(
-        call(&home, "store.remove", &[("store", t("shop"))])
+        call(&home, "store.remove", &[("name", t("shop"))])
             .unwrap_err()
             .0,
         "Busy"
@@ -157,10 +148,10 @@ fn a_store_call_during_a_push_is_busy_even_from_the_pushers_process() {
             .exists(),
         "no lease was taken"
     );
-    let status = call(&home, "store.get", &[("store", t("shop"))]).unwrap();
+    let status = call(&home, "store.status", &[("name", t("shop"))]).unwrap();
     assert_eq!(status.get_text("state"), Some("busy"));
     let op = status.get("op").unwrap();
-    assert_eq!(op.get_text("name"), Some("move"));
+    assert_eq!(op.get_text("name"), Some("store.push"));
     assert_eq!(op.get_text("phase"), Some("record"));
     assert!(op.get("owner").is_none(), "{op:?}");
 
@@ -182,8 +173,7 @@ fn taking_a_lease_removes_the_leases_of_processes_that_ended_and_keeps_live_ones
     // a process id above every kernel's pid_max ended; process 1 is alive
     std::fs::write(dir.join("99999999"), "1\n").unwrap();
     std::fs::write(dir.join("1"), "1\n").unwrap();
-    let args = [("store", t("shop")), ("with", t("live"))];
-    let status = call(&home, "store.get", &args).unwrap();
+    let status = call(&home, "store.status", &[("name", t("shop"))]).unwrap();
     assert!(
         dir.join("99999999").exists(),
         "a read removed a lease: {status:?}"
@@ -205,36 +195,41 @@ fn a_gone_pushers_uncertain_op_is_unresolved_until_store_remove_clears_it() {
     set_op(&home, this_process_pushing(1, true));
     let (code, message) = read(&home).unwrap_err();
     assert_eq!(code, "Unresolved", "{message}");
-    // a new move is the call that clears a move's intent (H6; the move
+    // a new push is the call that clears a push's intent (H6; the push
     // that does it is in store_transfer_crash.rs)
-    for named in ["`layerfs store get shop`", "`layerfs store move shop box`"] {
+    for named in [
+        "`layerfs store status shop`",
+        "`layerfs store push shop box`",
+    ] {
         assert!(message.contains(named), "{named} not in {message}");
     }
     assert_eq!(
         lease::hold(&home, "shop").err().map(|r| r.code).as_deref(),
         Some("Unresolved")
     );
-    let status = call(&home, "store.get", &[("store", t("shop"))]).unwrap();
-    assert_eq!(status.get_text("state"), Some("broken"));
-    assert_eq!(status.get_text("reason"), Some("unresolved"));
-    assert_eq!(status.get_text("fix"), Some("layerfs store move shop box"));
+    let status = call(&home, "store.status", &[("name", t("shop"))]).unwrap();
+    assert_eq!(status.get_text("state"), Some("unresolved"));
+    assert_eq!(
+        status.get("op").and_then(|op| op.get("uncertain")),
+        Some(&SdkValue::Bool(true))
+    );
     // the clearing call is not refused by what it clears
-    call(&home, "store.remove", &[("store", t("shop"))]).unwrap();
+    call(&home, "store.remove", &[("name", t("shop"))]).unwrap();
     assert!(!paths::store_dir(&home, "shop").exists());
     std::fs::remove_dir_all(home).unwrap();
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
-fn a_move_or_remove_waits_for_a_lease_another_thread_of_its_process_holds() {
+fn a_push_or_remove_waits_for_a_lease_another_thread_of_its_process_holds() {
     let (home, root) = home_with_shop();
     let held = lease::hold(&home, "shop").unwrap();
     for (name, args) in [
         (
-            "store.move",
-            vec![("store", t("shop")), ("machine", t("box"))],
+            "store.push",
+            vec![("name", t("shop")), ("machine", t("box"))],
         ),
-        ("store.remove", vec![("store", t("shop"))]),
+        ("store.remove", vec![("name", t("shop"))]),
     ] {
         let (code, message) = call(&home, name, &args).unwrap_err();
         assert_eq!(code, "InUse", "{name}: {message}");
@@ -247,11 +242,11 @@ fn a_move_or_remove_waits_for_a_lease_another_thread_of_its_process_holds() {
     drop(held);
     call(
         &home,
-        "store.move",
-        &[("store", t("shop")), ("machine", t("box"))],
+        "store.push",
+        &[("name", t("shop")), ("machine", t("box"))],
     )
     .unwrap();
-    call(&home, "store.remove", &[("store", t("shop"))]).unwrap();
+    call(&home, "store.remove", &[("name", t("shop"))]).unwrap();
     assert!(!paths::store_dir(&home, "shop").exists());
     assert!(!paths::store_dir(&root, "shop").exists());
     std::fs::remove_dir_all(home).unwrap();
@@ -263,8 +258,8 @@ fn a_move_or_remove_waits_for_a_lease_another_thread_of_its_process_holds() {
 fn home_with_stopped(machine_field: SdkValue) -> PathBuf {
     let home = tempdir("stopped");
     home::open(&home).unwrap();
-    machine(&home, "native", "native", Some("running"));
-    machine(&home, "vm", "lima", None);
+    machine(&home, "native", "native");
+    machine(&home, "vm", "lima");
     write_record(
         &paths::store_record(&home, "shop"),
         &SdkValue::map([
@@ -272,7 +267,7 @@ fn home_with_stopped(machine_field: SdkValue) -> PathBuf {
             ("kind", t("sqlite")),
             ("binding", SdkValue::Bytes(vec![7; 16])),
             ("cursor", SdkValue::Bytes(vec![8; 32])),
-            ("profile", t("normal")),
+            ("profile", t("disposable")),
             ("machine", machine_field),
         ]),
     )
@@ -281,21 +276,12 @@ fn home_with_stopped(machine_field: SdkValue) -> PathBuf {
 }
 
 #[test]
-fn a_store_on_a_stopped_machine_is_blocked_and_its_read_starts_nothing() {
+fn status_of_a_store_on_a_stopped_machine_starts_nothing_and_says_down() {
     let home = home_with_stopped(t("vm"));
-    let blocked = SdkValue::map([("machine", t("vm")), ("reason", t("stopped"))]);
-    for with in [None, Some("live")] {
-        let mut args = vec![("store", t("shop"))];
-        args.extend(with.map(|with| ("with", t(with))));
-        let status = call(&home, "store.get", &args).unwrap();
-        assert_eq!(status.get_text("state"), Some("blocked"), "{with:?}");
-        assert_eq!(status.get("blocked_by"), Some(&blocked), "{with:?}");
-    }
-    let listed = call(&home, "store.list", &[("machine", t("vm"))]).unwrap();
-    assert_eq!(
-        layerfs_api::json::print(&listed),
-        r#"{"items":[{"store":"shop","engine":"sqlite","state":"blocked","machine":"vm","blocked_by":{"machine":"vm","reason":"stopped"}}]}"#
-    );
+    let status = call(&home, "store.status", &[("name", t("shop"))]).unwrap();
+    assert_eq!(status.get_text("state"), Some("down"));
+    let reason = status.get_text("down_reason").unwrap_or("");
+    assert!(reason.contains("not running"), "{reason}");
     assert!(
         !paths::machine_dir(&home, "vm").join("start.lock").exists(),
         "no start was attempted"
@@ -303,76 +289,13 @@ fn a_store_on_a_stopped_machine_is_blocked_and_its_read_starts_nothing() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
-/// v19: a live read answers `blocked` first while the Store's machine is
-/// not ready, even when this home's record holds an op left unresolved;
-/// the records-only read keeps the held state first.
 #[test]
-fn a_live_read_is_blocked_first_even_over_a_held_op() {
-    let home = home_with_stopped(t("vm"));
-    let path = paths::store_record(&home, "shop");
-    let held = home::with_field(
-        read_record(&path).unwrap().unwrap(),
-        "op",
-        this_process_pushing(1, true),
-    );
-    write_record(&path, &held).unwrap();
-    let live = call(
-        &home,
-        "store.get",
-        &[("store", t("shop")), ("with", t("live"))],
-    )
-    .unwrap();
-    assert_eq!(live.get_text("state"), Some("blocked"), "{live:?}");
-    assert_eq!(
-        live.get("blocked_by"),
-        Some(&SdkValue::map([
-            ("machine", t("vm")),
-            ("reason", t("stopped"))
-        ]))
-    );
-    let recorded = call(&home, "store.get", &[("store", t("shop"))]).unwrap();
-    assert_eq!(recorded.get_text("state"), Some("broken"), "{recorded:?}");
-    assert_eq!(recorded.get_text("reason"), Some("unresolved"));
-    assert!(
-        !paths::machine_dir(&home, "vm").join("start.lock").exists(),
-        "no start was attempted"
-    );
-    std::fs::remove_dir_all(home).unwrap();
-}
-
-/// A Store record this build does not read (a `machine` that is not
-/// text, no `kind`) reads `broken` `unsupported` with `store remove` as its
-/// fix, and `store remove` or `store disconnect` takes its records alone.
-#[test]
-fn a_store_whose_record_is_not_read_is_removed_by_its_records() {
+fn remove_refuses_a_store_whose_machine_is_unknown() {
     let home = home_with_stopped(SdkValue::Null);
-    let detail = [("store", t("shop")), ("detail", SdkValue::Bool(true))];
-    let got = call(&home, "store.get", &detail).unwrap();
-    assert_eq!(got.get_text("state"), Some("broken"), "{got:?}");
-    assert_eq!(got.get_text("reason"), Some("unsupported"), "{got:?}");
-    assert_eq!(got.get_text("fix"), Some("layerfs store remove shop"));
-    let moved = [("store", t("shop")), ("machine", t("vm"))];
-    let refused = refusal(&home, "store.move", &moved);
-    assert_eq!(refused.code, "InvalidInput", "{}", refused.message);
-    assert!(refused.message.contains("Store record machine"));
-    assert_eq!(
-        refused.detail.get_text("fix"),
-        Some("layerfs store remove shop")
-    );
-    let removed = call(&home, "store.remove", &detail).unwrap();
-    assert_eq!(removed.get_text("outcome"), Some("removed"), "{removed:?}");
-    assert!(!paths::store_record(&home, "shop").exists());
-
-    // a record with no `kind`: `store disconnect` takes its records too
-    write_record(
-        &paths::store_record(&home, "old"),
-        &SdkValue::map([("name", t("old"))]),
-    )
-    .unwrap();
-    let old = [("store", t("old"))];
-    let disconnected = call(&home, "store.disconnect", &old).unwrap();
-    assert!(disconnected.get_bool("ok"), "{disconnected:?}");
-    assert!(!paths::store_record(&home, "old").exists());
+    let (code, message) = call(&home, "store.remove", &[("name", t("shop"))]).unwrap_err();
+    assert_eq!(code, "Unavailable", "{message}");
+    assert!(message.contains("import-env"), "{message}");
+    assert!(paths::store_record(&home, "shop").is_file(), "records kept");
     std::fs::remove_dir_all(home).unwrap();
 }
 
@@ -383,7 +306,7 @@ fn remove_reaches_a_stopped_machine_before_it_takes_the_home_lock() {
     // starting the machine would wait 120 s for it
     let lock = home::lock::take(&home).unwrap();
     let started = Instant::now();
-    let (code, message) = call(&home, "store.remove", &[("store", t("shop"))]).unwrap_err();
+    let (code, message) = call(&home, "store.remove", &[("name", t("shop"))]).unwrap_err();
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "{code}: {message}"
@@ -396,27 +319,24 @@ fn remove_reaches_a_stopped_machine_before_it_takes_the_home_lock() {
 }
 
 #[test]
-fn a_move_refuses_the_wrong_side_and_a_stopped_machine_naming_machine_start() {
-    // on native: a move here is refused, one to the stopped `vm` names its start
+fn push_and_pull_refuse_the_wrong_side_and_a_stopped_machine_naming_machine_start() {
+    // on native: a pull is refused, a push to the stopped `vm` names its start
     let home = home_with_stopped(t("native"));
-    let here = [("store", t("shop")), ("machine", t("native"))];
-    let (code, message) = call(&home, "store.move", &here).unwrap_err();
+    let (code, message) = call(&home, "store.pull", &[("name", t("shop"))]).unwrap_err();
     assert_eq!(code, "InvalidInput", "{message}");
     assert!(message.contains("already on native"), "{message}");
-    let args = [("store", t("shop")), ("machine", t("nosuch"))];
-    assert_eq!(call(&home, "store.move", &args).unwrap_err().0, "NotFound");
-    let args = [("store", t("shop")), ("machine", t("vm"))];
-    let stopped = refusal(&home, "store.move", &args);
-    assert_eq!(stopped.code, "Unavailable", "{}", stopped.message);
-    assert!(
-        stopped.message.contains("`layerfs machine start vm`"),
-        "{}",
-        stopped.message
-    );
-    assert_eq!(
-        stopped.detail.get_text("fix"),
-        Some("layerfs machine start vm")
-    );
+    for (to, want) in [("native", "InvalidInput"), ("nosuch", "NotFound")] {
+        let args = [("name", t("shop")), ("machine", t(to))];
+        assert_eq!(
+            call(&home, "store.push", &args).unwrap_err().0,
+            want,
+            "{to}"
+        );
+    }
+    let args = [("name", t("shop")), ("machine", t("vm"))];
+    let (code, message) = call(&home, "store.push", &args).unwrap_err();
+    assert_eq!(code, "Unavailable", "{message}");
+    assert!(message.contains("`layerfs machine start vm`"), "{message}");
     assert_eq!(
         record(&home).get("op"),
         None,
@@ -425,13 +345,13 @@ fn a_move_refuses_the_wrong_side_and_a_stopped_machine_naming_machine_start() {
     assert_eq!(record(&home).get_text("machine"), Some("native"));
     std::fs::remove_dir_all(home).unwrap();
 
-    // on the stopped `vm`: a move there is refused, one here names its start
+    // on the stopped `vm`: a push is refused, a pull names its start
     let home = home_with_stopped(t("vm"));
-    let args = [("store", t("shop")), ("machine", t("vm"))];
-    let (code, message) = call(&home, "store.move", &args).unwrap_err();
+    let args = [("name", t("shop")), ("machine", t("vm"))];
+    let (code, message) = call(&home, "store.push", &args).unwrap_err();
     assert_eq!(code, "InvalidInput", "{message}");
-    assert!(message.contains("already on vm"), "{message}");
-    let (code, message) = call(&home, "store.move", &here).unwrap_err();
+    assert!(message.contains("store pull shop"), "{message}");
+    let (code, message) = call(&home, "store.pull", &[("name", t("shop"))]).unwrap_err();
     assert_eq!(code, "Unavailable", "{message}");
     assert!(message.contains("`layerfs machine start vm`"), "{message}");
     assert_eq!(record(&home).get("op"), None);
@@ -468,9 +388,9 @@ fn huge_wal(store: &Path) -> PathBuf {
 }
 
 #[test]
-fn a_move_names_what_holds_the_store_and_needs_room_on_the_target() {
+fn push_and_pull_name_what_holds_the_store_and_need_room_on_the_target() {
     let (home, root) = home_with_shop();
-    let push = [("store", t("shop")), ("machine", t("box"))];
+    let push = [("name", t("shop")), ("machine", t("box"))];
     // a live lease (process 1 is always alive) and a Sandbox record, even
     // one that is not running: `InUse`, `detail.related` names both
     let lease = paths::lease_dir(&home, "shop").join("1");
@@ -486,7 +406,7 @@ fn a_move_names_what_holds_the_store_and_needs_room_on_the_target() {
         ]),
     )
     .unwrap();
-    let held = refusal(&home, "store.move", &push);
+    let held = refusal(&home, "store.push", &push);
     assert_eq!(held.code, "InUse", "{}", held.message);
     assert_eq!(
         held.detail.get("related"),
@@ -496,7 +416,7 @@ fn a_move_names_what_holds_the_store_and_needs_room_on_the_target() {
         ]))
     );
     assert_eq!(held.detail.get_text("phase"), Some("check"));
-    let removed = refusal(&home, "store.remove", &[("store", t("shop"))]);
+    let removed = refusal(&home, "store.remove", &[("name", t("shop"))]);
     assert_eq!(removed.code, "InUse");
     assert_eq!(held.detail.get("related"), removed.detail.get("related"));
     std::fs::remove_file(&lease).unwrap();
@@ -504,12 +424,8 @@ fn a_move_names_what_holds_the_store_and_needs_room_on_the_target() {
 
     // no room on the target: `Capacity` before `op` is written
     for (side, call, args) in [
-        (&home, "store.move", push.to_vec()),
-        (
-            &root,
-            "store.move",
-            vec![("store", t("shop")), ("machine", t("native"))],
-        ),
+        (&home, "store.push", push.to_vec()),
+        (&root, "store.pull", vec![("name", t("shop"))]),
     ] {
         let wal = huge_wal(&paths::store_file(side, "shop"));
         let full = refusal(&home, call, &args);
@@ -522,7 +438,7 @@ fn a_move_names_what_holds_the_store_and_needs_room_on_the_target() {
         std::fs::remove_file(wal).unwrap();
         // with room, it goes
         let moved = call_ok(&home, call, &args);
-        assert!(moved.get_int("moved_bytes").is_some(), "{moved:?}");
+        assert_eq!(moved.get_text("store"), Some("shop"));
     }
     assert_eq!(record(&home).get_text("machine"), Some("native"));
     std::fs::remove_dir_all(home).unwrap();

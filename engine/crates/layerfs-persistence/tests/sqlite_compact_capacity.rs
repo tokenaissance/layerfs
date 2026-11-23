@@ -20,7 +20,7 @@
 //! `CAPACITY_DEAD_OBJECTS` (initial dead objects, default 6770),
 //! `CAPACITY_OBJECT_BYTES` (default 131071, the largest whole-file
 //! payload), `CAPACITY_RUNS` (default 3 per arm), `CAPACITY_DURABLE=1` (adds
-//! one WAL/FULL rebuild after the WAL/NORMAL runs), `CAPACITY_KEEP=1` (keeps the
+//! one WAL/FULL rebuild after the WAL/OFF runs), `CAPACITY_KEEP=1` (keeps the
 //! temporary Store) and `CAPACITY_OUT` (fixture path override).
 //!
 //! Fixture shape: every live file is the largest whole-file object (131071 B)
@@ -74,6 +74,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 fn profile_label(profile: SqlitePersistenceProfile) -> &'static str {
     match profile {
         SqlitePersistenceProfile::Durable => "SqlitePersistenceProfile::Durable (WAL/FULL)",
+        SqlitePersistenceProfile::Disposable => "SqlitePersistenceProfile::Disposable (WAL/OFF)",
         SqlitePersistenceProfile::Normal => "SqlitePersistenceProfile::Normal (WAL/NORMAL)",
     }
 }
@@ -522,7 +523,7 @@ fn capacity_measure() {
 
     // Build the live payload through the public APIs: whole-file objects reached
     // through an inode leaf and a filesystem root, published as a stack genesis.
-    let handles = create_store(&store, SqlitePersistenceProfile::Normal);
+    let handles = create_store(&store, SqlitePersistenceProfile::Disposable);
     let build_started = Instant::now();
     let mut seed = 0u64;
     for group in 0..groups {
@@ -561,7 +562,7 @@ fn capacity_measure() {
     // The `none` path at ~9%: mark only, repeated for the E3 median and range.
     let mut none_runs = Vec::new();
     for run in 0..u8::try_from(runs_per_arm).expect("run count") {
-        let measured = measured(&store, SqlitePersistenceProfile::Normal, 90 + run, 0);
+        let measured = measured(&store, SqlitePersistenceProfile::Disposable, 90 + run, 0);
         assert_eq!(measured.path, "none", "~9% dead takes the none path");
         eprintln!(
             "capacity_measure: none run {} -> {} us, dead {} B, shrink {} B",
@@ -581,7 +582,7 @@ fn capacity_measure() {
     for run in 0..u8::try_from(runs_per_arm).expect("run count") {
         let (_crossed, added, seed) = cross_ten(
             &store,
-            SqlitePersistenceProfile::Normal,
+            SqlitePersistenceProfile::Disposable,
             dead_bytes,
             dead_seed,
             object_bytes,
@@ -589,7 +590,7 @@ fn capacity_measure() {
         dead_seed = seed;
         let measured = measured(
             &store,
-            SqlitePersistenceProfile::Normal,
+            SqlitePersistenceProfile::Disposable,
             100 + run,
             added,
         );
@@ -682,7 +683,7 @@ fn capacity_measure() {
         none_total,
         rebuild_dead,
         rebuild_total,
-        profile_label(SqlitePersistenceProfile::Normal),
+        profile_label(SqlitePersistenceProfile::Disposable),
         std::env::consts::OS,
         std::env::consts::ARCH,
         rustc_version(),
@@ -850,7 +851,7 @@ fn the_peak_temp_receipt_covers_the_fresh_store_and_the_visited_scratch() {
 
     let temp = Temp::new("sqlite-compact-peak-temp");
     let store = temp.join("store.sqlite");
-    let handles = create_store(&store, SqlitePersistenceProfile::Normal);
+    let handles = create_store(&store, SqlitePersistenceProfile::Disposable);
     let mut seed = 0u64;
     for group in 0..GROUPS {
         let payloads: Vec<Vec<u8>> = (0..GROUP)
@@ -864,7 +865,7 @@ fn the_peak_temp_receipt_covers_the_fresh_store_and_the_visited_scratch() {
     drop(handles);
 
     let sampler = FootprintSampler::start(&store);
-    let handles = reopen(&store, SqlitePersistenceProfile::Normal);
+    let handles = reopen(&store, SqlitePersistenceProfile::Disposable);
     let receipt = handles.compact(&request(0x7a)).expect("compaction");
     let footprint = sampler.finish();
 

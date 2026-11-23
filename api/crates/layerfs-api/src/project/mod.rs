@@ -1,11 +1,11 @@
-//! The `project` family: 7 calls, one file each.
+//! The `project` family: 8 calls, one file each.
 mod delete;
 mod doctor;
 mod export;
 mod get;
-mod hide_path;
 mod init;
 mod list;
+mod remove_file;
 mod stats;
 
 use crate::calls::Calls;
@@ -17,9 +17,9 @@ pub(crate) fn calls() -> Calls {
         list::CALL,
         get::CALL,
         stats::CALL,
+        doctor::CALL,
         export::CALL,
         delete::CALL,
-        hide_path::CALL,
-        doctor::CALL,
+        remove_file::CALL,
     ]
 }

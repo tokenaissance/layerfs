@@ -94,7 +94,6 @@ fn committed(fixture: &support::Fixture, id: u8) -> (BoundWorkspace, Vec<u8>) {
         .commit_captured(&CommitOptions {
             force: false,
             message: Some("new file".into()),
-            expected: None,
         })
         .unwrap_or_else(|failure| panic!("Workspace Commit: {failure:?}"));
     assert!(matches!(

@@ -1,5 +1,4 @@
-//! What `home get --with platforms` (`machine.platforms` before the call
-//! surface 2.0) tells a client setting LayerFS up (spec §2.3):
+//! What `machine.platforms` tells a client setting LayerFS up (spec §2.3):
 //! it needs no home and creates none; a platform that runs a worker names
 //! the bundle it lacks (`bundle:<dir>`); options carry their defaults; the
 //! docker row names its socket (where it comes from and what it does) and
@@ -26,13 +25,8 @@ fn call(home: &Path, name: &str, args: &[(&str, SdkValue)]) -> Result<SdkValue, 
 }
 
 fn rows(home: &Path) -> Vec<SdkValue> {
-    let asked = [
-        ("detail", SdkValue::Bool(true)),
-        ("with", SdkValue::List(vec![t("platforms")])),
-    ];
-    let answer = call(home, "home.get", &asked).unwrap();
-    let platforms = answer.get("platforms").cloned().unwrap_or_default();
-    let Some(SdkValue::List(rows)) = platforms.get("items") else {
+    let answer = call(home, "machine.platforms", &[]).unwrap();
+    let Some(SdkValue::List(rows)) = answer.get("platforms") else {
         panic!("{answer:?}")
     };
     rows.clone()
@@ -90,7 +84,7 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
     // no home: none is made, and the host is described
     let home = root.join("home");
     let found = rows(&home);
-    assert!(!home.exists(), "home get --with platforms made the home");
+    assert!(!home.exists(), "machine.platforms made the home");
     let worker_platforms: Vec<&str> = found
         .iter()
         .filter(|r| r.get_text("sqlite") == Some("worker"))
@@ -114,7 +108,7 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
         };
         for option in options {
             let default = option.get("default").unwrap();
-            let expected = match option.get_text("option").unwrap() {
+            let expected = match option.get_text("name").unwrap() {
                 "cpus" => SdkValue::Int(2),
                 "memory" => SdkValue::Int(4 << 30),
                 "disk" => SdkValue::Int(20 << 30),
@@ -129,13 +123,13 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
     };
     let names: Vec<_> = options
         .iter()
-        .map(|o| o.get_text("option").unwrap())
+        .map(|o| o.get_text("name").unwrap())
         .collect();
     for size in ["cpus", "memory", "disk"] {
         assert!(names.contains(&size), "{names:?}");
     }
     // only the docker row has a socket and candidates
-    assert_eq!(lima.get("socket"), Some(&SdkValue::Null));
+    assert_eq!(lima.get("socket"), None);
     let docker = row(&found, "docker");
     assert_eq!(
         socket(docker),
@@ -189,7 +183,7 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
         &home,
         "machine.update",
         &[
-            ("machine", t("docker")),
+            ("name", t("docker")),
             ("docker", t(recorded.to_str().unwrap())),
         ],
     )
@@ -202,7 +196,7 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
     call(
         &home,
         "machine.update",
-        &[("machine", t("docker")), ("docker", t(""))],
+        &[("name", t("docker")), ("docker", t(""))],
     )
     .unwrap();
     let (path, source, _) = socket(row(&rows(&home), "docker"));
@@ -210,9 +204,8 @@ fn platforms_describe_the_host_without_a_home_and_create_takes_the_stock_image()
         (path.as_str(), source.as_str()),
         (engine.to_str().unwrap(), "env:DOCKER_HOST")
     );
-    let asked = [("machine", t("docker")), ("detail", SdkValue::Bool(true))];
-    let shown = call(&home, "machine.get", &asked).unwrap();
-    assert_eq!(shown.get("docker"), Some(&SdkValue::Null), "{shown:?}");
+    let shown = call(&home, "machine.get", &[("name", t("docker"))]).unwrap();
+    assert_eq!(shown.get("docker"), None, "{shown:?}");
 
     if cfg!(target_os = "macos") {
         stock_image(&root, &home, &bundle);

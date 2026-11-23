@@ -9,8 +9,8 @@
 //! with no other call running here, the Store's write-ahead log is
 //! checkpointed and truncated once (#86), so a quiesced Store's size is its
 //! file. The Store stays open. After a call this runs on its own thread once
-//! the call is answered; after `sandbox.remove` it runs before that answer, so
-//! a `store get --with live` right after sees the truncated log. A checkpoint that
+//! the call is answered; after `sandbox.close` it runs before that answer, so
+//! a `store status` right after sees the truncated log. A checkpoint that
 //! cannot complete now (another process writing, a reader still in the log)
 //! is left for the idle close and never retried.
 use crate::lease::Lease;
@@ -48,7 +48,16 @@ static SETTLED: Condvar = Condvar::new();
 /// The Store stays open while it runs.
 pub fn run(op: &str, open: &OpenArgs, args: SdkValue, lease: Option<Lease>) -> Outcome {
     let running = Running(enter(open, lease, 1)?);
-    let outcome = direct::call(op, open, args);
+    // The bounded places this home can speak for, read once for the call. The
+    // engine never opens a home record; a worker call installs its own view
+    // before this, and that view is kept.
+    let place = match layerfs_store_service::history::admission::has_place_view() {
+        true => None,
+        false => crate::place_view::from_open(open),
+    };
+    let outcome = layerfs_store_service::history::admission::with_place_view(place, || {
+        direct::call(op, open, args)
+    });
     drop(running);
     outcome
 }

@@ -28,13 +28,18 @@ pub struct Spec {
     /// copied into the guest once.
     pub image: Option<PathBuf>,
     /// The VM's own system: an OCI reference (`apple-container` and the
-    /// `docker` worker container on macOS and Linux) or a Lima
+    /// `docker` worker container on macOS) or a Lima
     /// image URL or absolute path. `None` takes the kind's default.
     pub os_image: Option<String>,
     /// Lasting guest state the caller stored from an earlier create.
     pub state: Lasting,
     /// The endpoint last returned for this machine (its `worker.json`), if any.
     pub worker: Option<Endpoint>,
+    /// The ordered incarnation the machine's start persists for the worker
+    /// it launches: the worker serves with it, and every mount it places
+    /// carries it. `None` for a stop or status spec, and for a worker an
+    /// older host started (that worker mints its own).
+    pub incarnation: Option<String>,
     /// A folder of the caller's for this machine: its logs.
     pub work_dir: PathBuf,
     pub tools: Tools,

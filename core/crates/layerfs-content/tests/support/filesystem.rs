@@ -350,7 +350,7 @@ impl Session {
     }
 }
 
-/// Normal directory removed when it is dropped.
+/// Disposable directory removed when it is dropped.
 pub struct TempDir {
     path: std::path::PathBuf,
 }

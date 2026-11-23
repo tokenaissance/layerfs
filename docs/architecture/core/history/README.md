@@ -42,7 +42,7 @@ identities, and the one catalog contract a persistence provider implements.
 The crate opens no database, reads no pack and never reads a clock or PID to
 invent an identity. A root is an `ObjectId`; history records which root a
 Commit or Layer holds and never reads its content. The provider runs on the
-Normal profile only; Durable execution is
+Disposable profile only; Durable execution is
 `NOT_RUN — disabled by owner until explicit reauthorization`.
 
 ## What it does
@@ -96,9 +96,7 @@ or any process, memory, socket or stdout/stderr state.
 | --- | --- |
 | Stack profile or scope differs | `Integrity("Commit context")` |
 | Base moved, or head moved without `force` | `HeadMoved(MovedState)` with expected and actual head and base |
-| `required_head` set and the Branch answers another head (its head Commit, else its base Layer), forced or not | `HeadMoved(MovedState)` |
-| Head moved, `force`, base unchanged | new Commit keeps `expected_head` as parent; `displaced` names the head the transaction read. Commits between `expected_head` and it stay on its first-parent chain, so `displaced` and parent links reach them all (and keep them, for collection) |
-| Branch advance matches no row | `HeadMoved`: the advance replaces only the head this transaction read (`commit_advance_branch` has a `head_commit_id` predicate), so a writer that moved the Branch meanwhile (a PostgreSQL lane connection lost inside the lane) publishes nothing over it |
+| Head moved, `force`, base unchanged | new Commit keeps `expected_head` as parent; `displaced` names the old head |
 | `candidate_root` equals the effective root | `UpToDate { head, root }` |
 | Otherwise | `Committed { record, displaced: None }` |
 
@@ -215,7 +213,7 @@ Callers match variants; nothing parses message text.
 ## Demonstration
 
 `layerfs-history` has one test of its own; the provider tests exercise the
-contract on Normal SQLite Stores. Each command gets a wall timeout of at
+contract on Disposable SQLite Stores. Each command gets a wall timeout of at
 most 120 s.
 
 | Test or example | Command | Platform | Shows |

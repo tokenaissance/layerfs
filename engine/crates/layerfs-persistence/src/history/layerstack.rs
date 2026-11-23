@@ -378,16 +378,7 @@ pub(crate) fn add_layer(
             actual_base: branch.base_layer,
         }))
     };
-    // The Commit is the Branch's head or one its head holds: a Branch moved
-    // to a history without it is `HeadMoved`.
-    let held = match branch.head_commit {
-        Some(head) => {
-            use layerfs_history::NodeId::Commit;
-            super::ancestry::is_ancestor(tx, Commit(request.commit), Commit(head))?
-        }
-        None => false,
-    };
-    if !held {
+    if branch.head_commit != Some(request.commit) {
         return Err(moved());
     }
     if branch.base_layer != request.expected_branch_base {

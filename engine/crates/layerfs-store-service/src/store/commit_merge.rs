@@ -245,14 +245,7 @@ impl BoundWorkspace {
                     limit,
                 })
             }
-            // A Save write or read the merge depended on failed: that is
-            // the first cause, as for construction.
-            (Err(error), None) => {
-                return Err(match save.take_failure() {
-                    Some(storage) => CommitError::Storage(storage),
-                    None => content(error),
-                })
-            }
+            (Err(error), None) => return Err(content(error)),
         };
         let (written, written_truncated) = if merged.clean() {
             (Vec::new(), false)

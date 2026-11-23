@@ -1,40 +1,36 @@
-//! `machine.remove`: delete a VM machine and its disk; of a machine of a
-//! platform removed in 2.0 only the record goes.
+//! `machine.remove`: delete a VM machine and its disk; a machine of a
+//! platform removed in 2.0 is only forgotten.
 use crate::calls::table::Kind::Name;
-use crate::calls::table::{a, call, Call, PROGRESS};
-#[cfg(feature = "machine")]
+use crate::calls::table::{a, call, Call};
 use crate::calls::Context;
-use crate::calls::Form;
-#[cfg(feature = "machine")]
 use layerfs_bridge::control::SdkValue;
 #[cfg(feature = "machine")]
 use layerfs_home::names::MachineName;
-#[cfg(feature = "machine")]
 use layerfs_home::outcome::Outcome;
-
-/// Its answer: `ok`; `message` says when only the record went.
-const FORM: Form = Form::of(&[], &["ok"], &["ok", "outcome", "machine", "message"]);
 
 /// Its table entry.
 pub(crate) const CALL: Call = call(
     "machine",
     "remove",
-    &[a("machine", Name)],
-    &[PROGRESS],
-    "delete a VM machine and its disk",
+    &[a("name", Name)],
+    &[],
+    "delete a VM machine and its disk; one of a removed platform is only forgotten",
     run,
-)
-.form(&FORM);
+);
 
-/// Runs `machine.remove`: `{ phase, done, total }` events, phases `check`
-/// and `delete`. The machine's own PostgreSQL addresses go with it.
+/// Runs `machine.remove`.
 #[cfg(feature = "machine")]
 fn run(context: &mut Context<'_>, args: &SdkValue) -> Outcome {
-    let machine = MachineName::parse(args.get_text("machine").unwrap_or(""))?;
-    let (home, events) = context.parts();
-    layerfs_control::machine::remove(home, events, &machine)
+    let name = MachineName::parse(args.get_text("name").unwrap_or(""))?;
+    layerfs_control::machine::remove(&context.home, &name)
 }
 
-// without the `machine` feature (the guest worker's build) it is
-// refused before any effect
-crate::calls::host_only::host_only!("remove");
+/// Without the `machine` feature (the guest worker's build) it is
+/// refused before any effect.
+#[cfg(not(feature = "machine"))]
+fn run(_context: &mut Context<'_>, _args: &SdkValue) -> Outcome {
+    Err(layerfs_home::outcome::refused(
+        "Unsupported",
+        "machine.remove is not built yet (#533 step 6)",
+    ))
+}

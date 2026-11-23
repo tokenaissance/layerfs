@@ -12,15 +12,13 @@ impl BackendAdapter for NamespacesBackend {
     fn description(&self) -> &'static str {
         "Sandboxes run in Linux namespaces and a cgroup"
     }
-    /// A Sandbox owns its mount, PID and IPC namespaces and its cgroup on
-    /// the kernel that runs it: a VM's on `lima` and `apple-container`, the
-    /// host's own on a Linux host's `native` and `docker` machines. No VM or
-    /// network namespace of its own, so the claim is `Namespaces`, whatever
-    /// the machine around it adds.
+    /// The isolation boundary is the VM that holds this one kernel (one per
+    /// Store); a Sandbox inside it owns its mount, PID and IPC namespaces and
+    /// its cgroup, not a VM of its own.
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             name: "namespaces-linux",
-            isolation: IsolationModel::Namespaces,
+            isolation: IsolationModel::MicroVm,
             mount_driver: MountDriver::Fuse,
             requires_image: true,
             search_path_policy: SearchPathPolicy::FixedContainer,
