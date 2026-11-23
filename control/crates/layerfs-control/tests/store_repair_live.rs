@@ -444,26 +444,14 @@ fn seed_reconcile(home: &Path) {
         store_record: None,
     })
     .unwrap();
-    // The start records the ordered incarnation before the worker serves.
+    // The start records the ordered incarnation before the worker serves, and
+    // a Sandbox retired before it leaves the home tombstone control reads
+    // outside the Sandbox namespace. Both are written after the seed below:
+    // admission consults its caller's home, so the mounts must exist before
+    // the new incarnation does for the worker start to be the first caller
+    // that can settle the older placement.
     let current = "p1:worker:0000000000000020:aa";
-    MachineRecord::of(home, "box")
-        .unwrap()
-        .with_incarnation(current)
-        .write(home)
-        .unwrap();
-    // A Sandbox retired before this worker: the home tombstone control reads
-    // outside the Sandbox namespace.
     let retired = "p1:sandbox:0000000000000010:aa";
-    write_entity(
-        &paths::sandbox_tombstone(home, "box", "retired"),
-        &SdkValue::map([
-            ("name", text("retired")),
-            ("machine", text("box")),
-            ("generation", text(retired)),
-            ("retired_ms", SdkValue::Int(1)),
-        ]),
-    )
-    .unwrap();
     let record = StoreRecord::read(home, "shop").unwrap().unwrap();
     let open = OpenArgs::of_record(home, "shop", &record).unwrap();
     with_service(&open, |service| {
@@ -502,15 +490,11 @@ fn seed_reconcile(home: &Path) {
                 fence_token: Some(format!("fence:{op:02x}")),
             })
         };
-        history
-            .gc_register(&mount(
-                0x81,
-                "live",
-                "p1:worker:0000000000000010:aa",
-                "p1:sandbox:0000000000000020:aa",
-                "boot:81",
-            ))
-            .unwrap();
+        // The restored (newer) mount and the retired Sandbox come first; the
+        // older incarnation last, before the home names the current one. A
+        // registration settles an older row from the home it can see, so an
+        // older mount seeded before the new incarnation survives admission
+        // for the worker start to settle.
         history
             .gc_register(&mount(
                 0x82,
@@ -523,8 +507,32 @@ fn seed_reconcile(home: &Path) {
         history
             .gc_register(&mount(0x83, "retired", current, retired, "boot:83"))
             .unwrap();
+        history
+            .gc_register(&mount(
+                0x81,
+                "live",
+                "p1:worker:0000000000000010:aa",
+                "p1:sandbox:0000000000000020:aa",
+                "boot:81",
+            ))
+            .unwrap();
         Ok(())
     })
+    .unwrap();
+    MachineRecord::of(home, "box")
+        .unwrap()
+        .with_incarnation(current)
+        .write(home)
+        .unwrap();
+    write_entity(
+        &paths::sandbox_tombstone(home, "box", "retired"),
+        &SdkValue::map([
+            ("name", text("retired")),
+            ("machine", text("box")),
+            ("generation", text(retired)),
+            ("retired_ms", SdkValue::Int(1)),
+        ]),
+    )
     .unwrap();
 }
 
@@ -702,19 +710,45 @@ fn the_live_six_of_three_hundred_thirty_one_is_repaired_removed_and_reclaimed() 
         .filter(|row| row.get_text("evidence") == Some("action=preview;operator=alice"))
         .collect();
     assert_eq!(previews.len(), 12, "{audit:?}");
+    // A preview row names the Branch the operator previewed, not `main`: the
+    // six Branches were each previewed twice (step 1 and step 3b).
+    let mut previewed: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for row in previews {
         assert_eq!(row.get_text("kind"), Some("mount"));
         assert_eq!(row.get_text("project"), Some("app"));
-        assert_eq!(row.get_text("branch"), Some("main"));
+        let branch = row.get_text("branch").expect("a preview names its Branch");
+        *previewed.entry(branch).or_default() += 1;
+    }
+    for tag in FIRST..FIRST + 6 {
+        let name = format!("stuck-{}", tag - FIRST);
+        assert_eq!(
+            previewed.get(name.as_str()),
+            Some(&2),
+            "the preview row names {name}: {audit:?}"
+        );
     }
 
-    // 3c. The doctor's worker-side read reports the same retained rows as
-    // evidence and releases nothing.
+    // 3c. The doctor's worker-side audit is the same bounded page (16 rows at
+    // limit 16) over the same retained rows, as evidence; it releases nothing.
     let doctor = diagnostic_audit(&placed);
     let Some(SdkValue::List(rows)) = doctor.get("items") else {
         panic!("doctor audit items: {doctor:?}");
     };
-    assert_eq!(rows.len(), 18, "{doctor:?}");
+    assert_eq!(rows.len(), 16, "the worker audit page is bounded: {doctor:?}");
+    assert_eq!(doctor.get("has_more"), Some(&SdkValue::Bool(true)), "{doctor:?}");
+    let releases = rows
+        .iter()
+        .filter(|row| {
+            row.get_text("evidence")
+                .is_some_and(|evidence| evidence.starts_with("action=release;"))
+        })
+        .count();
+    let previews = rows
+        .iter()
+        .filter(|row| row.get_text("evidence") == Some("action=preview;operator=alice"))
+        .count();
+    assert_eq!(releases, 6, "{doctor:?}");
+    assert_eq!(previews, 10, "{doctor:?}");
 
     // 4. The six now remove, and their names stay retired until compaction.
     for tag in FIRST..FIRST + 6 {
