@@ -27,11 +27,11 @@ const CACHE: usize = 64 * 1024 * 1024;
 /// `cat`'s buffer.
 const BUFFER: usize = 128 * 1024;
 /// Store demands per 64 MiB above which the read was not read ahead: one
-/// kernel read is 128 KiB, so without read-ahead it is about 512. The SQLite
-/// engine reads ahead in 512 KiB windows, about 141 demands for 64 MiB;
-/// PostgreSQL's window is larger and stays under 64.
-const MOST_DEMANDS_SQLITE: u64 = 192;
-const MOST_DEMANDS_POSTGRESQL: u64 = 64;
+/// kernel read is 128 KiB, so without read-ahead it is about 512. The engine
+/// reads objects ahead in 512 KiB windows (`objects/edges.rs` `BATCH_BYTES`),
+/// about 141 demands for 64 MiB; the mounted lane measured 141 on SQLite and
+/// 140 on PostgreSQL at `a0ef644d`.
+const MOST_DEMANDS: u64 = 192;
 
 /// `length` non-repeating bytes from a fixed xorshift64* stream.
 fn random(length: usize) -> Vec<u8> {
@@ -133,7 +133,7 @@ fn a_mounted_sequential_read_reads_ahead_on_sqlite() {
     .unwrap();
     let demands = read_mounted("sqlite", &opened, &fixture.directory, fixture.branch, &big);
     assert!(
-        demands <= MOST_DEMANDS_SQLITE,
+        demands <= MOST_DEMANDS,
         "{demands} Store demands for 64 MiB"
     );
     drop(opened);
@@ -215,7 +215,7 @@ fn a_mounted_sequential_read_reads_ahead_on_postgresql() {
     // The schema goes with the test database, which the runner drops.
     std::fs::remove_dir_all(&directory).unwrap();
     assert!(
-        demands <= MOST_DEMANDS_POSTGRESQL,
+        demands <= MOST_DEMANDS,
         "{demands} Store demands for 64 MiB"
     );
 }
