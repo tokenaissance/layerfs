@@ -199,7 +199,9 @@ def settlePlace (s : State) (intent : Intent) : State :=
 def doSandboxMount (s : State) (i : Intent) : State :=
   if mountOk s i then
     let s1 := settlePlace s i
-    let i1 := { i with witness := some (witnessFor s i) }
+    let i1 := { i with state := .live, witness := some (witnessFor s i),
+                       doneBy := none, uncertain := false, settled := false,
+                       action := none, releasedWith := none }
     { s1 with store :=
         { (s1.store.addIntent i.op i1) with compacted := false } }
   else s
@@ -233,9 +235,11 @@ def doMachineRestore (s : State) (m : MachineId) (inc : Ordered) : State :=
 def doAdmissionRecheck (s : State) (op : OpId) : State :=
   match s.store.intents op with
   | none => s
-  | some _ =>
-      { s with store := s.store.updateIntent op (fun i =>
-          { i with witness := some (witnessFor s i) }) }
+  | some i =>
+      if i.state != .done then
+        { s with store := s.store.updateIntent op (fun i =>
+            { i with witness := some (witnessFor s i) }) }
+      else s
 
 def doLeaseRenew (s : State) (op : OpId) (f : Option Fence) (e : Ms) : State :=
   if leaseRenewOk s op f then
@@ -308,10 +312,8 @@ def doOperatorRelease (s : State) (op : OpId) (label : String)
 
 def doOperatorArchive (s : State) (rows : List OpId) (prune : Bool) : State :=
   if archiveOk s rows then
-    let s1 := { s with store := { s.store with exported := rows ++ s.store.exported } }
-    if prune then
-      { s1 with store := rows.foldl (fun st op => st.removeIntent op) s1.store }
-    else s1
+    let st := if prune then rows.foldl (fun st op => st.removeIntent op) s.store else s.store
+    { s with store := { st with exported := rows ++ s.store.exported } }
   else s
 
 /-! ### `Op` and `step` -/
