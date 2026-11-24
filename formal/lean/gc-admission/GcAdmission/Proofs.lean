@@ -1704,4 +1704,213 @@ theorem step_preserves (op : Op) (s : State) (h : Inv s) : Inv (step op s) :=
     inv7 := Inv7_always (step op s)
     inv8 := Inv8_preserves op s h }
 
+
+/-! ## Guard soundness (for the corollaries) -/
+
+theorem allDeadCertainB_sound {s : State} (h : allDeadCertainB s = true) :
+    ∀ op i, s.store.intents op = some i → i.state ≠ .done →
+      Dead s i ∧ i.uncertain = false := by
+  intro op i hi hnd
+  have hmem : op ∈ s.store.entries := Store.intents_mem hi
+  unfold allDeadCertainB at h
+  have hp := (List.all_eq_true.mp h) op hmem
+  simp [hi] at hp
+  rcases hp with hdone | hdead
+  · exact absurd hdone hnd
+  · exact hdead
+
+theorem allDeadCertainOnB_sound {s : State} {b : BranchId}
+    (h : allDeadCertainOnB s b = true) :
+    ∀ op i, s.store.intents op = some i → HoldsBranch s b i → i.state ≠ .done →
+      Dead s i ∧ i.uncertain = false := by
+  intro op i hi hh hnd
+  have hmem : op ∈ s.store.entries := Store.intents_mem hi
+  unfold allDeadCertainOnB at h
+  have hp := (List.all_eq_true.mp h) op hmem
+  have hhold : holdsBranchB s b i = true := holdsBranchB_iff.mpr hh
+  simp [hi, hhold, hnd] at hp
+  exact hp
+
+theorem reconcileDeadB_iff {s : State} {m : MachineId} {inc : Ordered} {i : Intent} :
+    reconcileDeadB s m inc i = true ↔ reconcileDead s m inc i := by
+  simp [reconcileDeadB]
+
+theorem Store.intents_removeWhere_removed_of_none {s : Store} (p : OpId → Intent → Bool)
+    {op : OpId} {i : Intent} (hi : s.intents op = some i)
+    (h : (s.removeWhere p).intents op = none) : p op i = true := by
+  by_cases hp : p op i = true
+  · exact hp
+  · have hp' : p op i = false := by
+      cases hpv : p op i with
+      | false => rfl
+      | true => exact absurd hpv hp
+    have hkeep := Store.intents_removeWhere_kept s p op i hi hp'
+    rw [hkeep, hi] at h
+    simp at h
+
+/-! ## The §9.4 corollaries -/
+
+theorem done_is_operator (s : State) (h : Inv s) (op : OpId) (i : Intent)
+    (hi : s.store.intents op = some i) (hdone : i.state = .done) :
+    i.doneBy = some .operator :=
+  h.inv8 op i hi hdone
+
+theorem cross_home_conservative (s : State) (i : Intent)
+    (h : placeOf s i = none) : verdict s i = ownerVerdict i.ownerEvidence := by
+  unfold verdict
+  rw [h]
+
+theorem conservative_no_death (s : State) (i : Intent)
+    (h : placeOf s i = none) : ¬ PlaceDead s i := by
+  unfold PlaceDead
+  rw [h]
+  simp
+
+theorem unordered_never_dead (now : Ms) (r : RecordedPlace) (p : PlaceRecord)
+    (h : compareMachine r.machine p.machine = some .uncertain) :
+    placeVerdict now r p ≠ .dead := by
+  unfold placeVerdict
+  rw [h]
+  simp
+
+/-- The plan's wording uses `comparePlace r.machine p.machine = recordedNewer`;
+with a possibly-missing machine value that falls through to the Sandbox, so the
+correct premise is the machine comparison itself.  Both forms are recorded in
+the README. -/
+theorem restore_is_uncertain (now : Ms) (r : RecordedPlace) (p : PlaceRecord)
+    (h : compareMachine r.machine p.machine = some .uncertain) :
+    placeVerdict now r p = .uncertain := by
+  unfold placeVerdict
+  rw [h]
+
+/-- The type-corrected machine-level ordered rule: the plan's §9.4 statement
+used `comparePlace` on `Option PlaceValue`s, which does not typecheck.  The
+machine comparison is exactly `compareMachine`, and `placeVerdict` consults it
+first. -/
+theorem ordered_rule (now : Ms) (r : RecordedPlace) (p : PlaceRecord) :
+    (compareMachine r.machine p.machine = some .dead → placeVerdict now r p = .dead) ∧
+    (compareMachine r.machine p.machine = some .uncertain → placeVerdict now r p = .uncertain) ∧
+    (compareMachine r.machine p.machine = none →
+       compareSandbox r.sandbox p.sandbox p.retired = none →
+         match r.leaseExpires with
+         | none   => placeVerdict now r p = .live
+         | some e => (e ≤ now → placeVerdict now r p = .uncertain) ∧
+                     (now < e → placeVerdict now r p = .live)) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro h; unfold placeVerdict; rw [h]
+  · intro h; unfold placeVerdict; rw [h]
+  · intro h hsb
+    unfold placeVerdict
+    rw [h, hsb]
+    split <;> simp_all
+
+
+theorem stale_fence_release_is_identity (s : State) (op : OpId)
+    (label : String) (f f' : Fence) (i : Intent)
+    (hi : s.store.intents op = some i) (hf : i.recorded.fence = some f)
+    (hne : f ≠ f') :
+    step (.operatorRelease op label (some f')) s = s := by
+  simp [step, doOperatorRelease, operatorReleaseOk, hi, fenceOk, hf, hne]
+
+theorem stale_fence_renew_is_identity (s : State) (op : OpId)
+    (f f' : Fence) (e : Ms) (i : Intent)
+    (hi : s.store.intents op = some i) (hf : i.recorded.fence = some f)
+    (hne : f ≠ f') :
+    step (.leaseRenew op (some f') e) s = s := by
+  simp [step, doLeaseRenew, leaseRenewOk, hi, fenceOk, hf, hne]
+
+theorem no_reclaim_live (s s' : State) (b : BranchId)
+    (h : Inv s) (hstep : step (.branchRemove b) s = s')
+    (hrem : s'.store.branches b = some .removed) : ¬ LiveHeldOn s b := by
+  rintro ⟨op, i, hi, hhold, hnd, hlive⟩
+  by_cases hg : allDeadCertainOnB s b = true
+  · have hdc := allDeadCertainOnB_sound hg op i hi hhold hnd
+    rcases hlive with hl | hu
+    · exact hl hdc.1
+    · rw [hdc.2] at hu; simp at hu
+  · subst s'
+    simp [step, doBranchRemove, hg] at hrem
+    exact h.inv1.2.1 b hrem ⟨op, i, hi, hhold, hnd⟩
+
+theorem compact_barrier (s s' : State)
+    (h : Inv s) (hstep : step .storeCompact s = s')
+    (hcompact : s'.store.compacted = true) : ¬ AnyLiveHeld s := by
+  rintro ⟨op, i, hi, hnd, hlive⟩
+  by_cases hg : allDeadCertainB s = true
+  · have hdc := allDeadCertainB_sound hg op i hi hnd
+    rcases hlive with hl | hu
+    · exact hl hdc.1
+    · rw [hdc.2] at hu; simp at hu
+  · subst s'
+    simp [step, doStoreCompact, hg] at hcompact
+    exact h.inv1.2.2 hcompact ⟨op, i, hi, hnd⟩
+
+theorem reconcile_only_dead (s s' : State) (m : MachineId) (inc : Ordered)
+    (hstep : step (.machineStart m inc) s = s') :
+    ∀ op i, s.store.intents op = some i → s'.store.intents op = none →
+      reconcileDead s m inc i := by
+  intro op i hi hnone
+  by_cases hg : machineStartOk s m inc = true
+  · subst s'
+    simp [step, doMachineStart, hg, State.mapHome] at hnone
+    have hp := Store.intents_removeWhere_removed_of_none
+      (fun _ i => reconcileDeadB s m inc i) hi hnone
+    exact reconcileDeadB_iff.mp hp
+  · subst s'
+    simp [step, doMachineStart, hg] at hnone
+    rw [hi] at hnone
+    simp at hnone
+
+theorem done_survives_compact (s s' : State)
+    (h : Inv s) (hstep : step .storeCompact s = s')
+    (hcompact : s'.store.compacted = true) :
+    ∀ op i, s.store.audit op = some i → s'.store.intents op = some i := by
+  intro op i ha
+  have ha' := Store.audit_eq_some_iff.mp ha
+  by_cases hg : allDeadCertainB s = true
+  · subst s'
+    simp [step, doStoreCompact, hg]
+    change (s.store.removeWhere (fun _ i => i.state != .done)).intents op = some i
+    have hp : (i.state != .done) = false := by simp [ha'.2]
+    rw [Store.intents_removeWhere_kept s.store (fun _ i => i.state != .done) op i ha'.1 hp]
+    exact ha'.1
+  · subst s'
+    simp [step, doStoreCompact, hg]
+    have hc : s.store.compacted = true := by simpa [step, doStoreCompact, hg] using hcompact
+    exact h.inv7.2.2 hc op i ha
+
+theorem archive_export_only (s s' : State) (rows : List OpId) (prune : Bool)
+    (hstep : step (.operatorArchive rows prune) s = s')
+    (hrows : ∀ op ∈ rows, ∃ i, s.store.audit op = some i ∧ i.state = .done) :
+    ∀ op ∈ rows, op ∈ s'.store.exported := by
+  have hg : archiveOk s rows = true := by
+    rw [archiveOk, List.all_eq_true]
+    intro op hop
+    rcases hrows op hop with ⟨i, ha, hd⟩
+    simp [ha, hd]
+  intro op hop
+  subst s'
+  by_cases hp : prune = true
+  · simp [step, doOperatorArchive, hg, hp]
+    exact Or.inl hop
+  · simp [step, doOperatorArchive, hg, hp]
+    exact Or.inl hop
+
+theorem preview_is_done (s s' : State) (branch : BranchId)
+    (row : OpId) (label : String)
+    (hstep : step (.operatorPreview branch row label) s = s')
+    (hfresh : s.store.intents row = none ∧ s.store.audit row = none ∧
+              row ∉ s.store.exported) :
+    ∃ i, s'.store.intents row = some i ∧ i.state = .done ∧
+         i.action = some .preview ∧ i.branch = some branch := by
+  have hg : previewOk s row = true := by
+    simp [previewOk, hfresh.1, hfresh.2.1, hfresh.2.2]
+  subst s'
+  refine ⟨previewIntent s branch row label, ?_, ?_, ?_, ?_⟩
+  · simp [step, doOperatorPreview, hg]
+    exact Store.intents_add_self s.store row (previewIntent s branch row label)
+  · simp [previewIntent]
+  · simp [previewIntent]
+  · simp [previewIntent]
+
 end GcAdmission

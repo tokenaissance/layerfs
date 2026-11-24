@@ -115,3 +115,45 @@ guard; `–` = unchanged by construction.
 * The G1/G2/G4 conformance record is the plan's §14; the code read is the p4
   tree `87890d785c` (`place_view.rs`, `store.rs`, `service.rs`,
   `history/admission.rs`, `sql/sqlite/gc.sql`, `compact/build.rs`).
+
+## Main theorem and receipt
+
+```lean
+theorem step_preserves (op : Op) (s : State) (h : Inv s) : Inv (step op s)
+```
+
+`GcAdmission/Axioms.lean` prints the axiom closure:
+
+```
+'GcAdmission.step_preserves' depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+There is no `sorryAx` and no user axiom.  `GcAdmission/Axioms.lean` is the
+CI receipt; `tools/check_lean_axioms.py` accepts exactly the three standard
+axioms above.
+
+## Corollary / example map
+
+| §9.4 corollary | Statement in this model | Example |
+| --- | --- | --- |
+| `no_reclaim_live` | a successful `branchRemove` leaves no `LiveHeldOn` | mount on a removed Branch is refused |
+| `compact_barrier` | a successful `storeCompact` leaves no `AnyLiveHeld` | a live intent blocks compact |
+| `reconcile_only_dead` | a row the worker-start reconcile deletes satisfies `reconcileDead` | (covered by `Inv8`/`Inv5` guards) |
+| `done_is_operator` | every done row has `doneBy = some .operator` | preview retains an operator done row |
+| `cross_home_conservative` | `placeOf = none` ⇒ the verdict is the owner fallback | owner-evidence witness |
+| `conservative_no_death` | `placeOf = none` ⇒ `¬ PlaceDead` | missing place is live |
+| `unordered_never_dead` | a machine `some .uncertain` never yields `Dead` | (pure authority) |
+| `restore_is_uncertain` | a machine `some .uncertain` is `Uncertain` | restore case |
+| `ordered_rule` | `compareMachine` dead/uncertain/none decomposes `placeVerdict` | ordered compare cases |
+| `stale_fence_release_is_identity` | a stale release token is the identity | stale fence example |
+| `stale_fence_renew_is_identity` | a stale renew token is the identity | (same guard) |
+| `done_survives_compact` | pre-`audit` rows survive `storeCompact` (`Copy::Done`) | archive exports the done row |
+| `archive_export_only` | a pruned row is in `exported` | G2 archive example |
+| `preview_is_done` | preview adds a `done` row (G4) | G4 preview example |
+
+Two type corrections to the illustrative §9.4 statements are recorded here.
+`comparePlace` takes `PlaceValue`, not `Option PlaceValue`, so `ordered_rule`
+and `unordered_never_dead`/`restore_is_uncertain` are stated at the
+`compareMachine` level (`some .dead`/`some .uncertain`), which is the exact
+sequential rule `placeVerdict` implements.  `preview_is_done`'s freshness is
+`s.store.intents row = none` (a function, not a set membership).

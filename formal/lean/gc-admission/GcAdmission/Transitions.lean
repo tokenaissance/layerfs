@@ -164,12 +164,14 @@ def reconcileDead (s : State) (m : MachineId) (inc : Ordered)
      (i.recorded.machine = none ∧ i.recorded.sandbox = none ∧
       ownerVerdict i.ownerEvidence = .dead))
 
+instance (s : State) (m : MachineId) (inc : Ordered) (i : Intent) :
+    Decidable (reconcileDead s m inc i) := by
+  unfold reconcileDead
+  infer_instance
+
 def reconcileDeadB (s : State) (m : MachineId) (inc : Ordered)
     (i : Intent) : Bool :=
-  (i.machine == some m) && (i.state != .done) && (!i.uncertain) &&
-  ((placeVerdict s.now i.recorded (reconcileRecord s i inc) == .dead) ||
-   (i.recorded.machine == none && i.recorded.sandbox == none &&
-    ownerVerdict i.ownerEvidence == .dead))
+  decide (reconcileDead s m inc i)
 
 /-! ### Transition effects -/
 
